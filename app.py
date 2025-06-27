@@ -25,16 +25,58 @@ st.title("📊 Dashboard Control de Avance - Hormigones, Moldajes y Enfierradura
 def get_drive_service():
     """Obtiene el servicio de Google Drive usando las credenciales"""
     try:
-        # Crear credenciales desde los secretos
-        creds_dict = st.secrets["GOOGLE_CREDENTIALS"]
+        # Obtener las credenciales de los secretos
+        creds_input = st.secrets["GOOGLE_CREDENTIALS"]
+        
+        # Debug: mostrar el tipo de datos recibido
+        st.write(f"Tipo de credenciales recibidas: {type(creds_input)}")
+        
+        # Convertir a diccionario según el tipo de entrada
+        if isinstance(creds_input, str):
+            # Si es string, intentar parsear como JSON
+            try:
+                creds_dict = json.loads(creds_input)
+                st.success("✅ Credenciales parseadas desde string JSON")
+            except json.JSONDecodeError as e:
+                st.error(f"❌ Error al parsear JSON: {e}")
+                return None
+        elif isinstance(creds_input, dict):
+            # Si ya es un diccionario, usarlo directamente
+            creds_dict = creds_input
+            st.success("✅ Credenciales recibidas como diccionario")
+        else:
+            st.error(f"❌ Tipo de credenciales no soportado: {type(creds_input)}")
+            return None
+        
+        # Verificar que tenga los campos necesarios
+        required_fields = ["type", "project_id", "private_key", "client_email"]
+        missing_fields = [field for field in required_fields if field not in creds_dict]
+        
+        if missing_fields:
+            st.error(f"❌ Faltan campos requeridos en las credenciales: {missing_fields}")
+            return None
+        
+        # Crear las credenciales
         creds = service_account.Credentials.from_service_account_info(
             creds_dict,
             scopes=['https://www.googleapis.com/auth/drive.readonly']
         )
+        
+        # Construir el servicio
         service = build('drive', 'v3', credentials=creds)
-        return service
+        
+        # Probar la conexión
+        try:
+            service.files().list(pageSize=1).execute()
+            st.success("✅ Conexión con Google Drive exitosa")
+            return service
+        except Exception as e:
+            st.error(f"❌ Error al conectar con Google Drive API: {e}")
+            return None
+            
     except Exception as e:
-        st.error(f"Error al conectar con Google Drive: {e}")
+        st.error(f"❌ Error general al configurar Google Drive: {e}")
+        st.error("Verifica que las credenciales estén en formato JSON válido")
         return None
 
 def download_file(service, file_id):
@@ -424,6 +466,27 @@ def mostrar_trisemanal():
 
 # Función principal
 def main():
+    # Debug: Verificar que los secretos estén configurados
+    try:
+        # Verificar que existan los secretos necesarios
+        required_secrets = ["GOOGLE_CREDENTIALS", "FILE_ID_GENERAL", "FOLDER_ID_SEMANAL"]
+        missing_secrets = []
+        
+        for secret in required_secrets:
+            if secret not in st.secrets:
+                missing_secrets.append(secret)
+        
+        if missing_secrets:
+            st.error(f"Faltan los siguientes secretos: {', '.join(missing_secrets)}")
+            st.info("Configura estos secretos en Streamlit Cloud > Settings > Secrets")
+            return
+        
+        st.success("✅ Todos los secretos configurados")
+    
+    except Exception as e:
+        st.error(f"Error al verificar configuración: {e}")
+        return
+    
     # Cargar datos
     df = cargar_datos()
     
