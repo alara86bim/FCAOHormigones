@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+
+# Streamlit secrets (nunca subir credenciales locales)
+credentials.json
+.secrets.toml
+
+# Archivos de datos locales (IGNORAR estos archivos si existen en la raíz)
+AO_GENERAL.txt
+REPORTE SEMANAL/
+
+# Entornos
+.env
+.venv/
+venv/
+ENV/
+
+# Archivos de sistema
+.DS_Store
+Thumbs.db
+
+# Otros
+*.log
+*.bak 
