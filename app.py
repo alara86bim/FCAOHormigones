@@ -265,40 +265,65 @@ def crear_tabla_interactiva(df, titulo, columna_volumen="VolumenHA"):
     # Mostrar tabla
     st.subheader(titulo)
     
-    # Agregar filtros
+    # Agregar filtros con manejo de errores
     col1, col2 = st.columns(2)
     
     with col1:
-        niveles = ["Todos"] + sorted(df_filtrado["Nivel"].unique().tolist())
-        nivel_seleccionado = st.selectbox("Filtrar por Nivel:", niveles)
+        try:
+            # Obtener niveles únicos y limpiar valores
+            niveles_raw = df_filtrado["Nivel"].dropna().unique()
+            niveles_clean = [str(n).strip() for n in niveles_raw if str(n).strip()]
+            niveles = ["Todos"] + sorted(niveles_clean)
+            nivel_seleccionado = st.selectbox("Filtrar por Nivel:", niveles)
+        except Exception as e:
+            st.error(f"Error al cargar niveles: {e}")
+            nivel_seleccionado = "Todos"
     
     with col2:
-        elementos = ["Todos"] + sorted(df_filtrado["Elementos"].unique().tolist())
-        elemento_seleccionado = st.selectbox("Filtrar por Elemento:", elementos)
+        try:
+            # Obtener elementos únicos y limpiar valores
+            elementos_raw = df_filtrado["Elementos"].dropna().unique()
+            elementos_clean = [str(e).strip() for e in elementos_raw if str(e).strip()]
+            elementos = ["Todos"] + sorted(elementos_clean)
+            elemento_seleccionado = st.selectbox("Filtrar por Elemento:", elementos)
+        except Exception as e:
+            st.error(f"Error al cargar elementos: {e}")
+            elemento_seleccionado = "Todos"
     
     # Aplicar filtros
     df_filtrado_tabla = pivot_table.copy()
-    if nivel_seleccionado != "Todos":
-        df_filtrado_tabla = df_filtrado_tabla[df_filtrado_tabla["Nivel"] == nivel_seleccionado]
-    if elemento_seleccionado != "Todos":
-        df_filtrado_tabla = df_filtrado_tabla[df_filtrado_tabla["Elementos"] == elemento_seleccionado]
+    try:
+        if nivel_seleccionado != "Todos":
+            df_filtrado_tabla = df_filtrado_tabla[df_filtrado_tabla["Nivel"] == nivel_seleccionado]
+        if elemento_seleccionado != "Todos":
+            df_filtrado_tabla = df_filtrado_tabla[df_filtrado_tabla["Elementos"] == elemento_seleccionado]
+    except Exception as e:
+        st.error(f"Error al aplicar filtros: {e}")
     
     # Mostrar tabla con st.dataframe
-    st.dataframe(
-        df_filtrado_tabla,
-        use_container_width=True,
-        hide_index=True,
-        column_config={
-            "Nivel": st.column_config.TextColumn("Nivel", width="medium"),
-            "Elementos": st.column_config.TextColumn("Elementos", width="large"),
-            "Total": st.column_config.NumberColumn("Total", format="%.2f"),
-            "% Avance": st.column_config.NumberColumn("% Avance", format="%.2f%%")
-        }
-    )
+    try:
+        st.dataframe(
+            df_filtrado_tabla,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Nivel": st.column_config.TextColumn("Nivel", width="medium"),
+                "Elementos": st.column_config.TextColumn("Elementos", width="large"),
+                "Total": st.column_config.NumberColumn("Total", format="%.2f"),
+                "% Avance": st.column_config.NumberColumn("% Avance", format="%.2f%%")
+            }
+        )
+    except Exception as e:
+        st.error(f"Error al mostrar tabla: {e}")
+        st.dataframe(df_filtrado_tabla, use_container_width=True)
     
     # Mostrar resumen
     if not df_filtrado_tabla.empty:
-        st.metric("Total General", f"{df_filtrado_tabla['Total'].sum():.2f}")
+        try:
+            total_sum = df_filtrado_tabla['Total'].sum()
+            st.metric("Total General", f"{total_sum:.2f}")
+        except Exception as e:
+            st.error(f"Error al calcular total: {e}")
 
 def mostrar_avance_semanal():
     """Muestra el avance semanal de hormigones"""
@@ -375,26 +400,45 @@ def mostrar_avance_semanal():
     col1, col2 = st.columns(2)
     
     with col1:
-        niveles = ["Todos"] + sorted(df_semana["Nivel"].unique().tolist())
-        nivel_seleccionado = st.selectbox("Filtrar por Nivel:", niveles, key="semanal_nivel")
+        try:
+            niveles_raw = df_semana["Nivel"].dropna().unique()
+            niveles_clean = [str(n).strip() for n in niveles_raw if str(n).strip()]
+            niveles = ["Todos"] + sorted(niveles_clean)
+            nivel_seleccionado = st.selectbox("Filtrar por Nivel:", niveles, key="semanal_nivel")
+        except Exception as e:
+            st.error(f"Error al cargar niveles: {e}")
+            nivel_seleccionado = "Todos"
     
     with col2:
-        elementos = ["Todos"] + sorted(df_semana["Elementos"].unique().tolist())
-        elemento_seleccionado = st.selectbox("Filtrar por Elemento:", elementos, key="semanal_elemento")
+        try:
+            elementos_raw = df_semana["Elementos"].dropna().unique()
+            elementos_clean = [str(e).strip() for e in elementos_raw if str(e).strip()]
+            elementos = ["Todos"] + sorted(elementos_clean)
+            elemento_seleccionado = st.selectbox("Filtrar por Elemento:", elementos, key="semanal_elemento")
+        except Exception as e:
+            st.error(f"Error al cargar elementos: {e}")
+            elemento_seleccionado = "Todos"
     
     # Aplicar filtros
     df_filtrado_tabla = pivot_semanal.copy()
-    if nivel_seleccionado != "Todos":
-        df_filtrado_tabla = df_filtrado_tabla[df_filtrado_tabla["Nivel"] == nivel_seleccionado]
-    if elemento_seleccionado != "Todos":
-        df_filtrado_tabla = df_filtrado_tabla[df_filtrado_tabla["Elementos"] == elemento_seleccionado]
+    try:
+        if nivel_seleccionado != "Todos":
+            df_filtrado_tabla = df_filtrado_tabla[df_filtrado_tabla["Nivel"] == nivel_seleccionado]
+        if elemento_seleccionado != "Todos":
+            df_filtrado_tabla = df_filtrado_tabla[df_filtrado_tabla["Elementos"] == elemento_seleccionado]
+    except Exception as e:
+        st.error(f"Error al aplicar filtros: {e}")
     
     # Mostrar tabla con st.dataframe
-    st.dataframe(
-        df_filtrado_tabla,
-        use_container_width=True,
-        hide_index=True
-    )
+    try:
+        st.dataframe(
+            df_filtrado_tabla,
+            use_container_width=True,
+            hide_index=True
+        )
+    except Exception as e:
+        st.error(f"Error al mostrar tabla: {e}")
+        st.dataframe(df_filtrado_tabla, use_container_width=True)
     
     # Mostrar gráfico de tendencia
     if len(fechas) >= 2:
@@ -483,26 +527,45 @@ def mostrar_trisemanal():
     col1, col2 = st.columns(2)
     
     with col1:
-        niveles = ["Todos"] + sorted(df_semana["Nivel"].unique().tolist())
-        nivel_seleccionado = st.selectbox("Filtrar por Nivel:", niveles, key="trisemanal_nivel")
+        try:
+            niveles_raw = df_semana["Nivel"].dropna().unique()
+            niveles_clean = [str(n).strip() for n in niveles_raw if str(n).strip()]
+            niveles = ["Todos"] + sorted(niveles_clean)
+            nivel_seleccionado = st.selectbox("Filtrar por Nivel:", niveles, key="trisemanal_nivel")
+        except Exception as e:
+            st.error(f"Error al cargar niveles: {e}")
+            nivel_seleccionado = "Todos"
     
     with col2:
-        elementos = ["Todos"] + sorted(df_semana["Elementos"].unique().tolist())
-        elemento_seleccionado = st.selectbox("Filtrar por Elemento:", elementos, key="trisemanal_elemento")
+        try:
+            elementos_raw = df_semana["Elementos"].dropna().unique()
+            elementos_clean = [str(e).strip() for e in elementos_raw if str(e).strip()]
+            elementos = ["Todos"] + sorted(elementos_clean)
+            elemento_seleccionado = st.selectbox("Filtrar por Elemento:", elementos, key="trisemanal_elemento")
+        except Exception as e:
+            st.error(f"Error al cargar elementos: {e}")
+            elemento_seleccionado = "Todos"
     
     # Aplicar filtros
     df_filtrado_tabla = pivot_trisemanal.copy()
-    if nivel_seleccionado != "Todos":
-        df_filtrado_tabla = df_filtrado_tabla[df_filtrado_tabla["Nivel"] == nivel_seleccionado]
-    if elemento_seleccionado != "Todos":
-        df_filtrado_tabla = df_filtrado_tabla[df_filtrado_tabla["Elementos"] == elemento_seleccionado]
+    try:
+        if nivel_seleccionado != "Todos":
+            df_filtrado_tabla = df_filtrado_tabla[df_filtrado_tabla["Nivel"] == nivel_seleccionado]
+        if elemento_seleccionado != "Todos":
+            df_filtrado_tabla = df_filtrado_tabla[df_filtrado_tabla["Elementos"] == elemento_seleccionado]
+    except Exception as e:
+        st.error(f"Error al aplicar filtros: {e}")
     
     # Mostrar tabla con st.dataframe
-    st.dataframe(
-        df_filtrado_tabla,
-        use_container_width=True,
-        hide_index=True
-    )
+    try:
+        st.dataframe(
+            df_filtrado_tabla,
+            use_container_width=True,
+            hide_index=True
+        )
+    except Exception as e:
+        st.error(f"Error al mostrar tabla: {e}")
+        st.dataframe(df_filtrado_tabla, use_container_width=True)
     
     # Mostrar resumen de diferencias
     if "Diferencia" in df_filtrado_tabla.columns:
