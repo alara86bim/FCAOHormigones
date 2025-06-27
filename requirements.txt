@@ -1,0 +1,8 @@
+streamlit
+pandas
+plotly
+st-aggrid
+google-api-python-client
+google-auth
+google-auth-oauthlib
+google-auth-httplib2 
