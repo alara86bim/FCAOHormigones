@@ -337,31 +337,25 @@ def cargar_archivos_semanales():
     
     return [], None
 
-def crear_tabla_interactiva(df, titulo, columna_volumen="VolumenHA"):
-    """Crea una tabla interactiva con st.dataframe"""
+def crear_tabla_interactiva(df, titulo, columna_volumen="VolumenHA", tab_key=""):
+    """Crea una tabla interactiva con st.dataframe, jerarquía visual por Nivel y Elemento"""
     if df.empty:
         st.warning("No hay datos para mostrar")
         return
-    
-    # Verificar que existan las columnas necesarias
+    # Verificar columnas necesarias
     required_columns = ["Nivel", "Elementos", columna_volumen]
     missing_columns = [col for col in required_columns if col not in df.columns]
-    
     if missing_columns:
         st.error(f"Faltan las siguientes columnas en los datos: {', '.join(missing_columns)}")
         st.info("Columnas disponibles: " + ", ".join(df.columns.tolist()))
         return
-    
-    # Solo mostrar filas con Nivel no vacío
+    # Filtrar filas válidas
     df_filtrado = df[df["Nivel"].notna() & (df["Nivel"].astype(str).str.strip() != "")]
-    
     if df_filtrado.empty:
         st.warning("No hay datos con niveles válidos")
         return
-    
-    # Verificar si existe la columna FC_CON_ESTADO
+    # Pivot o agrupación
     if "FC_CON_ESTADO" in df_filtrado.columns:
-        # Crear tabla pivot con estado
         pivot_table = df_filtrado.pivot_table(
             values=columna_volumen,
             index=["Nivel", "Elementos"],
@@ -370,56 +364,42 @@ def crear_tabla_interactiva(df, titulo, columna_volumen="VolumenHA"):
             fill_value=0
         ).reset_index()
     else:
-        # Si no existe FC_CON_ESTADO, crear tabla simple
         st.info("No se encontró la columna 'FC_CON_ESTADO'. Mostrando resumen simple.")
         pivot_table = df_filtrado.groupby(["Nivel", "Elementos"])[columna_volumen].sum().reset_index()
         pivot_table = pivot_table.rename(columns={columna_volumen: "Total"})
-    
-    # Calcular totales si no existe la columna Total
+    # Calcular totales y %
     if "Total" not in pivot_table.columns:
         numeric_columns = pivot_table.select_dtypes(include=[np.number]).columns
         if len(numeric_columns) > 0:
             pivot_table["Total"] = pivot_table[numeric_columns].sum(axis=1)
         else:
             pivot_table["Total"] = 0
-    
-    # Calcular porcentaje de avance
     if "Total" in pivot_table.columns and pivot_table["Total"].sum() > 0:
         pivot_table["% Avance"] = (pivot_table["Total"] / pivot_table["Total"].sum() * 100).round(2)
-    
-    # Formatear columnas numéricas
     for col in pivot_table.select_dtypes(include=[np.number]).columns:
         pivot_table[col] = pivot_table[col].round(2)
-    
-    # Mostrar tabla
+    # Ordenar por Nivel y Elemento para jerarquía visual
+    pivot_table = pivot_table.sort_values(["Nivel", "Elementos"]).reset_index(drop=True)
     st.subheader(titulo)
-    
-    # Agregar filtros con manejo de errores
     col1, col2 = st.columns(2)
-    
     with col1:
         try:
-            # Obtener niveles únicos y limpiar valores
             niveles_raw = df_filtrado["Nivel"].dropna().unique()
             niveles_clean = [str(n).strip() for n in niveles_raw if str(n).strip()]
             niveles = ["Todos"] + sorted(niveles_clean)
-            nivel_seleccionado = st.selectbox("Filtrar por Nivel:", niveles)
+            nivel_seleccionado = st.selectbox("Filtrar por Nivel:", niveles, key=f"nivel_{tab_key}")
         except Exception as e:
             st.error(f"Error al cargar niveles: {e}")
             nivel_seleccionado = "Todos"
-    
     with col2:
         try:
-            # Obtener elementos únicos y limpiar valores
             elementos_raw = df_filtrado["Elementos"].dropna().unique()
             elementos_clean = [str(e).strip() for e in elementos_raw if str(e).strip()]
             elementos = ["Todos"] + sorted(elementos_clean)
-            elemento_seleccionado = st.selectbox("Filtrar por Elemento:", elementos)
+            elemento_seleccionado = st.selectbox("Filtrar por Elemento:", elementos, key=f"elemento_{tab_key}")
         except Exception as e:
             st.error(f"Error al cargar elementos: {e}")
             elemento_seleccionado = "Todos"
-    
-    # Aplicar filtros
     df_filtrado_tabla = pivot_table.copy()
     try:
         if nivel_seleccionado != "Todos":
@@ -428,8 +408,6 @@ def crear_tabla_interactiva(df, titulo, columna_volumen="VolumenHA"):
             df_filtrado_tabla = df_filtrado_tabla[df_filtrado_tabla["Elementos"] == elemento_seleccionado]
     except Exception as e:
         st.error(f"Error al aplicar filtros: {e}")
-    
-    # Mostrar tabla con st.dataframe
     try:
         st.dataframe(
             df_filtrado_tabla,
@@ -445,8 +423,6 @@ def crear_tabla_interactiva(df, titulo, columna_volumen="VolumenHA"):
     except Exception as e:
         st.error(f"Error al mostrar tabla: {e}")
         st.dataframe(df_filtrado_tabla, use_container_width=True)
-    
-    # Mostrar resumen
     if not df_filtrado_tabla.empty:
         try:
             total_sum = df_filtrado_tabla['Total'].sum()
@@ -459,7 +435,7 @@ def mostrar_avance_semanal():
     # Verificar si se debe usar archivos locales
     use_local_files = st.sidebar.checkbox(
         "📁 Usar archivos locales (ignorar Google Drive)",
-        key="semanal_local_checkbox",
+        key="main_local_checkbox",
         help="Marca esta opción si quieres usar archivos locales en lugar de Google Drive"
     )
     
@@ -811,6 +787,7 @@ def main():
     # Opción para forzar uso de archivos locales
     use_local_files = st.sidebar.checkbox(
         "📁 Usar archivos locales (ignorar Google Drive)",
+        key="main_local_checkbox",
         help="Marca esta opción si quieres usar archivos locales en lugar de Google Drive"
     )
     
@@ -901,34 +878,27 @@ def main():
     
     # Crear pestañas
     tabs = st.tabs([
-        "🏗️ Hormigones", 
-        "📐 Moldajes", 
-        "🔩 Enfierraduras",
-        "📈 Avance Semanal Hormigones",
-        "🔄 TRISEMANAL"
+        "📊 Avance General",
+        "📈 Avance Semanal",
+        "🔄 Avance Trisemanal"
     ])
-    
-    # Pestaña Hormigones
+
+    # Pestaña Avance General
     with tabs[0]:
-        st.header("🏗️ Control de Avance - Hormigones")
-        crear_tabla_interactiva(df, "Avance de Hormigones", "VolumenHA")
-    
-    # Pestaña Moldajes
+        st.header("📊 Avance General de Obra")
+        st.markdown("### Hormigones")
+        crear_tabla_interactiva(df, "Avance de Hormigones", "VolumenHA", tab_key="hormigones_general")
+        st.markdown("### Moldajes")
+        crear_tabla_interactiva(df, "Avance de Moldajes", "AreaMoldaje", tab_key="moldajes_general")
+        st.markdown("### Enfierraduras")
+        crear_tabla_interactiva(df, "Avance de Enfierraduras", "Cuantia", tab_key="enfierraduras_general")
+
+    # Pestaña Avance Semanal
     with tabs[1]:
-        st.header("📐 Control de Avance - Moldajes")
-        crear_tabla_interactiva(df, "Avance de Moldajes", "AreaMoldaje")
-    
-    # Pestaña Enfierraduras
-    with tabs[2]:
-        st.header("🔩 Control de Avance - Enfierraduras")
-        crear_tabla_interactiva(df, "Avance de Enfierraduras", "Cuantia")
-    
-    # Pestaña Avance Semanal Hormigones
-    with tabs[3]:
         mostrar_avance_semanal()
-    
-    # Pestaña TRISEMANAL
-    with tabs[4]:
+
+    # Pestaña Avance Trisemanal
+    with tabs[2]:
         mostrar_trisemanal()
 
 # Ejecutar aplicación
