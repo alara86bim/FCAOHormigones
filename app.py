@@ -1,8 +1,9 @@
-gdown
-google-auth
-google-auth-oauthlib
-google-auth-httplib2
-google-api-python-client 
+import streamlit as st
+import pandas as pd
+import re
+from st_aggrid import AgGrid, GridOptionsBuilder, JsCode
+import plotly.express as px
+# Agrega aquí otros imports necesarios para tu app, como la API de Google Drive
 
 # --- Avance Semanal Hormigones ---
 with tabs[3]:
