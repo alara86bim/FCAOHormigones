@@ -20,6 +20,15 @@ st.set_page_config(
 # Título principal
 st.title("📊 Dashboard Control de Avance - Hormigones, Moldajes y Enfierraduras")
 
+def clean_private_key(private_key_str):
+    """Limpia y formatea correctamente el private_key"""
+    # Si ya tiene el formato correcto, devolverlo tal como está
+    if "-----BEGIN PRIVATE KEY-----" in private_key_str and "-----END PRIVATE KEY-----" in private_key_str:
+        # Reemplazar \\n por \n si es necesario
+        cleaned_key = private_key_str.replace("\\n", "\n")
+        return cleaned_key
+    return private_key_str
+
 # Configuración de Google Drive
 @st.cache_resource
 def get_drive_service():
@@ -56,9 +65,35 @@ def get_drive_service():
             st.error(f"❌ Faltan campos requeridos en las credenciales: {missing_fields}")
             return None
         
+        # Crear una copia limpia de las credenciales
+        clean_creds = {
+            "type": creds_dict["type"],
+            "project_id": creds_dict["project_id"],
+            "private_key_id": creds_dict["private_key_id"],
+            "client_email": creds_dict["client_email"],
+            "client_id": creds_dict["client_id"],
+            "auth_uri": creds_dict["auth_uri"],
+            "token_uri": creds_dict["token_uri"],
+            "auth_provider_x509_cert_url": creds_dict["auth_provider_x509_cert_url"],
+            "client_x509_cert_url": creds_dict["client_x509_cert_url"]
+        }
+        
+        # Manejar el private_key de forma especial
+        private_key = creds_dict["private_key"]
+        
+        # Si el private_key tiene \\n, reemplazarlo por \n
+        if "\\n" in private_key:
+            private_key = private_key.replace("\\n", "\n")
+            st.success("✅ Private key con \\n convertido a \\n")
+        
+        clean_creds["private_key"] = private_key
+        
+        # Debug: mostrar las primeras líneas del private_key
+        st.write(f"Private key preview: {private_key[:100]}...")
+        
         # Crear las credenciales
         creds = service_account.Credentials.from_service_account_info(
-            creds_dict,
+            clean_creds,
             scopes=['https://www.googleapis.com/auth/drive.readonly']
         )
         
