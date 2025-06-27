@@ -8,6 +8,13 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
 import io
 import json
+import time
+import ssl
+import urllib3
+from urllib3.util.retry import Retry
+from requests.adapters import HTTPAdapter
+import requests
+import os
 
 # Configuración de la página
 st.set_page_config(
@@ -114,20 +121,76 @@ def get_drive_service():
         st.error("Verifica que las credenciales estén en formato JSON válido")
         return None
 
-def download_file(service, file_id):
-    """Descarga un archivo de Google Drive"""
-    try:
-        request = service.files().get_media(fileId=file_id)
-        fh = io.BytesIO()
-        downloader = MediaIoBaseDownload(fh, request)
-        done = False
-        while done is False:
-            status, done = downloader.next_chunk()
-        fh.seek(0)
-        return fh
-    except Exception as e:
-        st.error(f"Error al descargar archivo: {e}")
-        return None
+def download_file(service, file_id, max_retries=3):
+    """Descarga un archivo de Google Drive con reintentos y mejor manejo de errores"""
+    # Si no hay servicio, asumir que es un archivo local
+    if service is None:
+        try:
+            if os.path.exists(file_id):
+                with open(file_id, 'rb') as f:
+                    fh = io.BytesIO(f.read())
+                fh.seek(0)
+                return fh
+            else:
+                st.error(f"❌ Archivo local no encontrado: {file_id}")
+                return None
+        except Exception as e:
+            st.error(f"❌ Error al leer archivo local: {e}")
+            return None
+    
+    # Descarga desde Google Drive
+    for attempt in range(max_retries):
+        try:
+            # Configurar timeout más largo para evitar timeouts
+            request = service.files().get_media(fileId=file_id)
+            fh = io.BytesIO()
+            downloader = MediaIoBaseDownload(fh, request, chunksize=1024*1024)  # 1MB chunks
+            
+            done = False
+            while done is False:
+                try:
+                    status, done = downloader.next_chunk()
+                    if status:
+                        # Mostrar progreso solo en el primer intento
+                        if attempt == 0:
+                            progress = int(status.progress() * 100)
+                            st.write(f"Descargando... {progress}%")
+                except Exception as chunk_error:
+                    st.warning(f"Error en chunk de descarga (intento {attempt + 1}): {chunk_error}")
+                    if attempt < max_retries - 1:
+                        time.sleep(2 ** attempt)  # Backoff exponencial
+                        break
+                    else:
+                        raise chunk_error
+            
+            fh.seek(0)
+            return fh
+            
+        except Exception as e:
+            error_msg = str(e)
+            st.warning(f"Error al descargar archivo (intento {attempt + 1}/{max_retries}): {error_msg}")
+            
+            # Si es el último intento, mostrar error detallado
+            if attempt == max_retries - 1:
+                if "EOF occurred in violation of protocol" in error_msg:
+                    st.error("❌ Error SSL: Problema de conexión con Google Drive")
+                    st.info("💡 Posibles soluciones:")
+                    st.info("1. Verifica tu conexión a internet")
+                    st.info("2. El archivo puede estar corrupto o muy grande")
+                    st.info("3. Google Drive puede estar temporalmente no disponible")
+                    st.info("4. Intenta recargar la página")
+                elif "timeout" in error_msg.lower():
+                    st.error("❌ Error de timeout: La descarga tardó demasiado")
+                elif "quota" in error_msg.lower():
+                    st.error("❌ Error de cuota: Se ha excedido el límite de Google Drive API")
+                else:
+                    st.error(f"❌ Error desconocido: {error_msg}")
+                return None
+            
+            # Esperar antes del siguiente intento
+            time.sleep(2 ** attempt)  # Backoff exponencial
+    
+    return None
 
 def list_files_in_folder(service, folder_id):
     """Lista archivos en una carpeta de Google Drive"""
@@ -145,68 +208,134 @@ def list_files_in_folder(service, folder_id):
 # Cargar datos desde Google Drive
 @st.cache_data(ttl=3600)  # Cache por 1 hora
 def cargar_datos():
-    """Carga el archivo AO_GENERAL.txt desde Google Drive"""
+    """Carga el archivo AO_GENERAL.txt desde Google Drive o local como fallback"""
     service = get_drive_service()
-    if not service:
-        return None
     
+    # Intentar cargar desde Google Drive primero
+    if service:
+        try:
+            file_id = st.secrets["FILE_ID_GENERAL"]
+            fh = download_file(service, file_id)
+            if fh:
+                df = pd.read_csv(fh, sep="\t", header=1, dtype=str)
+                df = df.dropna(how="all")
+                
+                # Limpiar columnas
+                df = df.rename(columns=lambda x: x.strip().replace('"', ''))
+                
+                # Convertir tipos de datos
+                for col in ["VolumenHA", "AreaMoldaje", "Cuantia"]:
+                    if col in df.columns:
+                        df[col] = pd.to_numeric(df[col].str.replace(",", ".", regex=False), errors='coerce')
+                
+                if "FC_CON_FECHA EJECUCION" in df.columns:
+                    df["FC_CON_FECHA EJECUCION"] = pd.to_datetime(
+                        df["FC_CON_FECHA EJECUCION"], 
+                        dayfirst=True, 
+                        errors='coerce'
+                    )
+                
+                st.success("✅ Datos cargados desde Google Drive")
+                return df
+        except Exception as e:
+            st.warning(f"⚠️ Error al cargar desde Google Drive: {e}")
+    
+    # Fallback: intentar cargar desde archivo local
     try:
-        file_id = st.secrets["FILE_ID_GENERAL"]
-        fh = download_file(service, file_id)
-        if not fh:
-            return None
+        local_file = "AO_GENERAL.txt"
+        if os.path.exists(local_file):
+            df = pd.read_csv(local_file, sep="\t", header=1, dtype=str)
+            df = df.dropna(how="all")
             
-        df = pd.read_csv(fh, sep="\t", header=1, dtype=str)
-        df = df.dropna(how="all")
-        
-        # Limpiar columnas
-        df = df.rename(columns=lambda x: x.strip().replace('"', ''))
-        
-        # Convertir tipos de datos
-        for col in ["VolumenHA", "AreaMoldaje", "Cuantia"]:
-            if col in df.columns:
-                df[col] = pd.to_numeric(df[col].str.replace(",", ".", regex=False), errors='coerce')
-        
-        if "FC_CON_FECHA EJECUCION" in df.columns:
-            df["FC_CON_FECHA EJECUCION"] = pd.to_datetime(
-                df["FC_CON_FECHA EJECUCION"], 
-                dayfirst=True, 
-                errors='coerce'
-            )
-        
-        return df
+            # Limpiar columnas
+            df = df.rename(columns=lambda x: x.strip().replace('"', ''))
+            
+            # Convertir tipos de datos
+            for col in ["VolumenHA", "AreaMoldaje", "Cuantia"]:
+                if col in df.columns:
+                    df[col] = pd.to_numeric(df[col].str.replace(",", ".", regex=False), errors='coerce')
+            
+            if "FC_CON_FECHA EJECUCION" in df.columns:
+                df["FC_CON_FECHA EJECUCION"] = pd.to_datetime(
+                    df["FC_CON_FECHA EJECUCION"], 
+                    dayfirst=True, 
+                    errors='coerce'
+                )
+            
+            st.success("✅ Datos cargados desde archivo local (fallback)")
+            return df
+        else:
+            st.error("❌ No se encontró el archivo local AO_GENERAL.txt")
     except Exception as e:
-        st.error(f"Error al cargar datos: {e}")
-        return None
+        st.error(f"❌ Error al cargar archivo local: {e}")
+    
+    return None
 
 @st.cache_data(ttl=3600)  # Cache por 1 hora
 def cargar_archivos_semanales():
-    """Carga archivos semanales desde Google Drive"""
+    """Carga archivos semanales desde Google Drive o local como fallback"""
     service = get_drive_service()
-    if not service:
-        return [], None
     
+    # Intentar cargar desde Google Drive primero
+    if service:
+        try:
+            folder_id = st.secrets["FOLDER_ID_SEMANAL"]
+            files = list_files_in_folder(service, folder_id)
+            
+            # Filtrar solo archivos *_AO_GENERAL.txt
+            archivos = [f for f in files if f['name'].endswith('_AO_GENERAL.txt')]
+            
+            def extraer_fecha(nombre):
+                m = re.match(r"(\d{2}-\d{2}-\d{4})_AO_GENERAL.txt", nombre)
+                return pd.to_datetime(m.group(1), dayfirst=True) if m else None
+            
+            archivos_fechas = [(f, extraer_fecha(f['name'])) for f in archivos]
+            archivos_fechas = sorted(
+                [x for x in archivos_fechas if x[1] is not None], 
+                key=lambda x: x[1]
+            )
+            
+            if archivos_fechas:
+                st.success("✅ Archivos semanales cargados desde Google Drive")
+                return archivos_fechas, service
+        except Exception as e:
+            st.warning(f"⚠️ Error al cargar archivos semanales desde Google Drive: {e}")
+    
+    # Fallback: intentar cargar desde carpeta local
     try:
-        folder_id = st.secrets["FOLDER_ID_SEMANAL"]
-        files = list_files_in_folder(service, folder_id)
-        
-        # Filtrar solo archivos *_AO_GENERAL.txt
-        archivos = [f for f in files if f['name'].endswith('_AO_GENERAL.txt')]
-        
-        def extraer_fecha(nombre):
-            m = re.match(r"(\d{2}-\d{2}-\d{4})_AO_GENERAL.txt", nombre)
-            return pd.to_datetime(m.group(1), dayfirst=True) if m else None
-        
-        archivos_fechas = [(f, extraer_fecha(f['name'])) for f in archivos]
-        archivos_fechas = sorted(
-            [x for x in archivos_fechas if x[1] is not None], 
-            key=lambda x: x[1]
-        )
-        
-        return archivos_fechas, service
+        local_folder = "REPORTE SEMANAL"
+        if os.path.exists(local_folder):
+            archivos = []
+            for filename in os.listdir(local_folder):
+                if filename.endswith('_AO_GENERAL.txt'):
+                    file_path = os.path.join(local_folder, filename)
+                    # Crear un objeto similar al de Google Drive
+                    file_obj = {
+                        'id': file_path,  # Usar path como ID
+                        'name': filename,
+                        'local_path': file_path
+                    }
+                    archivos.append(file_obj)
+            
+            def extraer_fecha(nombre):
+                m = re.match(r"(\d{2}-\d{2}-\d{4})_AO_GENERAL.txt", nombre)
+                return pd.to_datetime(m.group(1), dayfirst=True) if m else None
+            
+            archivos_fechas = [(f, extraer_fecha(f['name'])) for f in archivos]
+            archivos_fechas = sorted(
+                [x for x in archivos_fechas if x[1] is not None], 
+                key=lambda x: x[1]
+            )
+            
+            if archivos_fechas:
+                st.success("✅ Archivos semanales cargados desde carpeta local (fallback)")
+                return archivos_fechas, None  # None indica que es local
+        else:
+            st.warning("⚠️ No se encontró la carpeta local REPORTE SEMANAL")
     except Exception as e:
-        st.error(f"Error al cargar archivos semanales: {e}")
-        return [], None
+        st.error(f"❌ Error al cargar archivos locales: {e}")
+    
+    return [], None
 
 def crear_tabla_interactiva(df, titulo, columna_volumen="VolumenHA"):
     """Crea una tabla interactiva con st.dataframe"""
@@ -327,7 +456,17 @@ def crear_tabla_interactiva(df, titulo, columna_volumen="VolumenHA"):
 
 def mostrar_avance_semanal():
     """Muestra el avance semanal de hormigones"""
-    archivos_fechas, service = cargar_archivos_semanales()
+    # Verificar si se debe usar archivos locales
+    use_local_files = st.sidebar.checkbox(
+        "📁 Usar archivos locales (ignorar Google Drive)",
+        key="semanal_local_checkbox",
+        help="Marca esta opción si quieres usar archivos locales en lugar de Google Drive"
+    )
+    
+    if use_local_files:
+        archivos_fechas, service = cargar_archivos_semanales_local()
+    else:
+        archivos_fechas, service = cargar_archivos_semanales()
     
     if not archivos_fechas:
         st.warning("No se encontraron archivos semanales")
@@ -450,7 +589,17 @@ def mostrar_avance_semanal():
 
 def mostrar_trisemanal():
     """Muestra comparación trisemanal"""
-    archivos_fechas, service = cargar_archivos_semanales()
+    # Verificar si se debe usar archivos locales
+    use_local_files = st.sidebar.checkbox(
+        "📁 Usar archivos locales (ignorar Google Drive)",
+        key="trisemanal_local_checkbox",
+        help="Marca esta opción si quieres usar archivos locales en lugar de Google Drive"
+    )
+    
+    if use_local_files:
+        archivos_fechas, service = cargar_archivos_semanales_local()
+    else:
+        archivos_fechas, service = cargar_archivos_semanales()
     
     if len(archivos_fechas) < 2:
         st.warning("Se necesitan al menos 2 archivos semanales para la comparación trisemanal")
@@ -583,35 +732,157 @@ def mostrar_trisemanal():
             negativas = df_filtrado_tabla[df_filtrado_tabla['Diferencia'] < 0]['Diferencia'].sum()
             st.metric("Diferencias Negativas", f"{negativas:.2f}")
 
+@st.cache_data(ttl=3600)  # Cache por 1 hora
+def cargar_datos_local():
+    """Carga el archivo AO_GENERAL.txt desde archivo local"""
+    try:
+        local_file = "AO_GENERAL.txt"
+        if os.path.exists(local_file):
+            df = pd.read_csv(local_file, sep="\t", header=1, dtype=str)
+            df = df.dropna(how="all")
+            
+            # Limpiar columnas
+            df = df.rename(columns=lambda x: x.strip().replace('"', ''))
+            
+            # Convertir tipos de datos
+            for col in ["VolumenHA", "AreaMoldaje", "Cuantia"]:
+                if col in df.columns:
+                    df[col] = pd.to_numeric(df[col].str.replace(",", ".", regex=False), errors='coerce')
+            
+            if "FC_CON_FECHA EJECUCION" in df.columns:
+                df["FC_CON_FECHA EJECUCION"] = pd.to_datetime(
+                    df["FC_CON_FECHA EJECUCION"], 
+                    dayfirst=True, 
+                    errors='coerce'
+                )
+            
+            st.success("✅ Datos cargados desde archivo local")
+            return df
+        else:
+            st.error("❌ No se encontró el archivo local AO_GENERAL.txt")
+            return None
+    except Exception as e:
+        st.error(f"❌ Error al cargar archivo local: {e}")
+        return None
+
+@st.cache_data(ttl=3600)  # Cache por 1 hora
+def cargar_archivos_semanales_local():
+    """Carga archivos semanales desde carpeta local"""
+    try:
+        local_folder = "REPORTE SEMANAL"
+        if os.path.exists(local_folder):
+            archivos = []
+            for filename in os.listdir(local_folder):
+                if filename.endswith('_AO_GENERAL.txt'):
+                    file_path = os.path.join(local_folder, filename)
+                    # Crear un objeto similar al de Google Drive
+                    file_obj = {
+                        'id': file_path,  # Usar path como ID
+                        'name': filename,
+                        'local_path': file_path
+                    }
+                    archivos.append(file_obj)
+            
+            def extraer_fecha(nombre):
+                m = re.match(r"(\d{2}-\d{2}-\d{4})_AO_GENERAL.txt", nombre)
+                return pd.to_datetime(m.group(1), dayfirst=True) if m else None
+            
+            archivos_fechas = [(f, extraer_fecha(f['name'])) for f in archivos]
+            archivos_fechas = sorted(
+                [x for x in archivos_fechas if x[1] is not None], 
+                key=lambda x: x[1]
+            )
+            
+            if archivos_fechas:
+                st.success("✅ Archivos semanales cargados desde carpeta local")
+                return archivos_fechas, None  # None indica que es local
+        else:
+            st.warning("⚠️ No se encontró la carpeta local REPORTE SEMANAL")
+    except Exception as e:
+        st.error(f"❌ Error al cargar archivos locales: {e}")
+    
+    return [], None
+
 # Función principal
 def main():
-    # Debug: Verificar que los secretos estén configurados
-    try:
-        # Verificar que existan los secretos necesarios
-        required_secrets = ["GOOGLE_CREDENTIALS", "FILE_ID_GENERAL", "FOLDER_ID_SEMANAL"]
-        missing_secrets = []
-        
-        for secret in required_secrets:
-            if secret not in st.secrets:
-                missing_secrets.append(secret)
-        
-        if missing_secrets:
-            st.error(f"Faltan los siguientes secretos: {', '.join(missing_secrets)}")
-            st.info("Configura estos secretos en Streamlit Cloud > Settings > Secrets")
-            return
-        
-        st.success("✅ Todos los secretos configurados")
+    # Configuración en sidebar
+    st.sidebar.header("⚙️ Configuración")
     
-    except Exception as e:
-        st.error(f"Error al verificar configuración: {e}")
-        return
+    # Opción para forzar uso de archivos locales
+    use_local_files = st.sidebar.checkbox(
+        "📁 Usar archivos locales (ignorar Google Drive)",
+        help="Marca esta opción si quieres usar archivos locales en lugar de Google Drive"
+    )
+    
+    if use_local_files:
+        st.sidebar.info("📁 Modo archivos locales activado")
+        # Verificar archivos locales
+        if not os.path.exists("AO_GENERAL.txt"):
+            st.sidebar.error("❌ No se encontró AO_GENERAL.txt")
+        else:
+            st.sidebar.success("✅ AO_GENERAL.txt encontrado")
+        
+        if not os.path.exists("REPORTE SEMANAL"):
+            st.sidebar.warning("⚠️ No se encontró carpeta REPORTE SEMANAL")
+        else:
+            weekly_files = [f for f in os.listdir("REPORTE SEMANAL") if f.endswith('_AO_GENERAL.txt')]
+            if weekly_files:
+                st.sidebar.success(f"✅ {len(weekly_files)} archivos semanales encontrados")
+            else:
+                st.sidebar.warning("⚠️ No se encontraron archivos semanales")
+    
+    # Debug: Verificar que los secretos estén configurados (solo si no se usan archivos locales)
+    if not use_local_files:
+        try:
+            # Verificar que existan los secretos necesarios
+            required_secrets = ["GOOGLE_CREDENTIALS", "FILE_ID_GENERAL", "FOLDER_ID_SEMANAL"]
+            missing_secrets = []
+            
+            for secret in required_secrets:
+                if secret not in st.secrets:
+                    missing_secrets.append(secret)
+            
+            if missing_secrets:
+                st.error(f"Faltan los siguientes secretos: {', '.join(missing_secrets)}")
+                st.info("Configura estos secretos en Streamlit Cloud > Settings > Secrets")
+                st.info("💡 Alternativamente, puedes usar archivos locales:")
+                st.info("- Coloca AO_GENERAL.txt en la raíz del proyecto")
+                st.info("- Coloca los archivos semanales en la carpeta 'REPORTE SEMANAL'")
+                return
+            
+            st.success("✅ Todos los secretos configurados")
+        
+        except Exception as e:
+            st.error(f"Error al verificar configuración: {e}")
+            return
+    
+    # Verificar archivos locales como alternativa
+    local_files_exist = False
+    if os.path.exists("AO_GENERAL.txt"):
+        st.info("📁 Archivo local AO_GENERAL.txt encontrado")
+        local_files_exist = True
+    
+    if os.path.exists("REPORTE SEMANAL"):
+        weekly_files = [f for f in os.listdir("REPORTE SEMANAL") if f.endswith('_AO_GENERAL.txt')]
+        if weekly_files:
+            st.info(f"📁 Carpeta local REPORTE SEMANAL encontrada con {len(weekly_files)} archivos")
+            local_files_exist = True
     
     # Cargar datos
-    df = cargar_datos()
+    if use_local_files:
+        # Forzar uso de archivos locales
+        df = cargar_datos_local()
+    else:
+        df = cargar_datos()
     
     if df is None:
-        st.error("No se pudieron cargar los datos desde Google Drive")
-        st.info("Verifica que las credenciales y IDs de archivo estén configurados correctamente")
+        st.error("No se pudieron cargar los datos")
+        if local_files_exist:
+            st.info("💡 Se detectaron archivos locales. La aplicación intentará usarlos automáticamente.")
+        else:
+            st.info("💡 Para usar archivos locales:")
+            st.info("1. Coloca AO_GENERAL.txt en la raíz del proyecto")
+            st.info("2. Coloca los archivos semanales en la carpeta 'REPORTE SEMANAL'")
         return
     
     # Debug: Mostrar información sobre los datos
