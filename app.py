@@ -214,6 +214,15 @@ def crear_tabla_interactiva(df, titulo, columna_volumen="VolumenHA"):
         st.warning("No hay datos para mostrar")
         return
     
+    # Verificar que existan las columnas necesarias
+    required_columns = ["Nivel", "Elementos", columna_volumen]
+    missing_columns = [col for col in required_columns if col not in df.columns]
+    
+    if missing_columns:
+        st.error(f"Faltan las siguientes columnas en los datos: {', '.join(missing_columns)}")
+        st.info("Columnas disponibles: " + ", ".join(df.columns.tolist()))
+        return
+    
     # Solo mostrar filas con Nivel no vacío
     df_filtrado = df[df["Nivel"].notna() & (df["Nivel"].astype(str).str.strip() != "")]
     
@@ -221,20 +230,32 @@ def crear_tabla_interactiva(df, titulo, columna_volumen="VolumenHA"):
         st.warning("No hay datos con niveles válidos")
         return
     
-    # Crear tabla pivot
-    pivot_table = df_filtrado.pivot_table(
-        values=columna_volumen,
-        index=["Nivel", "Elementos"],
-        columns="FC_CON_ESTADO",
-        aggfunc="sum",
-        fill_value=0
-    ).reset_index()
+    # Verificar si existe la columna FC_CON_ESTADO
+    if "FC_CON_ESTADO" in df_filtrado.columns:
+        # Crear tabla pivot con estado
+        pivot_table = df_filtrado.pivot_table(
+            values=columna_volumen,
+            index=["Nivel", "Elementos"],
+            columns="FC_CON_ESTADO",
+            aggfunc="sum",
+            fill_value=0
+        ).reset_index()
+    else:
+        # Si no existe FC_CON_ESTADO, crear tabla simple
+        st.info("No se encontró la columna 'FC_CON_ESTADO'. Mostrando resumen simple.")
+        pivot_table = df_filtrado.groupby(["Nivel", "Elementos"])[columna_volumen].sum().reset_index()
+        pivot_table = pivot_table.rename(columns={columna_volumen: "Total"})
     
-    # Calcular totales
-    pivot_table["Total"] = pivot_table.select_dtypes(include=[np.number]).sum(axis=1)
+    # Calcular totales si no existe la columna Total
+    if "Total" not in pivot_table.columns:
+        numeric_columns = pivot_table.select_dtypes(include=[np.number]).columns
+        if len(numeric_columns) > 0:
+            pivot_table["Total"] = pivot_table[numeric_columns].sum(axis=1)
+        else:
+            pivot_table["Total"] = 0
     
     # Calcular porcentaje de avance
-    if "Total" in pivot_table.columns:
+    if "Total" in pivot_table.columns and pivot_table["Total"].sum() > 0:
         pivot_table["% Avance"] = (pivot_table["Total"] / pivot_table["Total"].sum() * 100).round(2)
     
     # Formatear columnas numéricas
@@ -529,6 +550,20 @@ def main():
         st.error("No se pudieron cargar los datos desde Google Drive")
         st.info("Verifica que las credenciales y IDs de archivo estén configurados correctamente")
         return
+    
+    # Debug: Mostrar información sobre los datos
+    st.success(f"✅ Datos cargados exitosamente: {len(df)} filas")
+    st.info(f"Columnas disponibles: {', '.join(df.columns.tolist())}")
+    
+    # Mostrar primeras filas para debug
+    with st.expander("🔍 Ver datos cargados (Debug)"):
+        st.write("Primeras 5 filas:")
+        st.dataframe(df.head(), use_container_width=True)
+        
+        st.write("Información del DataFrame:")
+        st.write(f"- Filas: {len(df)}")
+        st.write(f"- Columnas: {len(df.columns)}")
+        st.write(f"- Columnas con datos: {df.columns.tolist()}")
     
     # Crear pestañas
     tabs = st.tabs([
