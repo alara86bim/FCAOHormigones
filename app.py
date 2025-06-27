@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import re
-from st_aggrid import AgGrid, GridOptionsBuilder, JsCode
 import plotly.express as px
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
@@ -133,7 +132,7 @@ def cargar_archivos_semanales():
         return [], None
 
 def crear_tabla_interactiva(df, titulo, columna_volumen="VolumenHA"):
-    """Crea una tabla interactiva con AgGrid"""
+    """Crea una tabla interactiva con st.dataframe"""
     if df.empty:
         st.warning("No hay datos para mostrar")
         return
@@ -161,38 +160,47 @@ def crear_tabla_interactiva(df, titulo, columna_volumen="VolumenHA"):
     if "Total" in pivot_table.columns:
         pivot_table["% Avance"] = (pivot_table["Total"] / pivot_table["Total"].sum() * 100).round(2)
     
-    # Configurar AgGrid
-    gb = GridOptionsBuilder.from_dataframe(pivot_table)
-    gb.configure_grid_options(
-        domLayout='normal',
-        rowGroupPanelShow='always',
-        pivotPanelShow='always'
-    )
-    gb.configure_column("Nivel", rowGroup=True, hide=True)
-    gb.configure_column("Elementos", rowGroup=True, hide=True)
-    
-    # Configurar columnas numéricas
+    # Formatear columnas numéricas
     for col in pivot_table.select_dtypes(include=[np.number]).columns:
-        gb.configure_column(
-            col,
-            type=["numericColumn", "numberColumnFilter"],
-            valueFormatter="value.toLocaleString('es-CL', {minimumFractionDigits: 2, maximumFractionDigits: 2})"
-        )
-    
-    grid_options = gb.build()
+        pivot_table[col] = pivot_table[col].round(2)
     
     # Mostrar tabla
     st.subheader(titulo)
-    grid_response = AgGrid(
-        pivot_table,
-        gridOptions=grid_options,
-        data_return_mode='AS_INPUT',
-        update_mode='MODEL_CHANGED',
-        fit_columns_on_grid_load=True,
-        theme='streamlit',
-        height=400,
-        allow_unsafe_jscode=True
+    
+    # Agregar filtros
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        niveles = ["Todos"] + sorted(df_filtrado["Nivel"].unique().tolist())
+        nivel_seleccionado = st.selectbox("Filtrar por Nivel:", niveles)
+    
+    with col2:
+        elementos = ["Todos"] + sorted(df_filtrado["Elementos"].unique().tolist())
+        elemento_seleccionado = st.selectbox("Filtrar por Elemento:", elementos)
+    
+    # Aplicar filtros
+    df_filtrado_tabla = pivot_table.copy()
+    if nivel_seleccionado != "Todos":
+        df_filtrado_tabla = df_filtrado_tabla[df_filtrado_tabla["Nivel"] == nivel_seleccionado]
+    if elemento_seleccionado != "Todos":
+        df_filtrado_tabla = df_filtrado_tabla[df_filtrado_tabla["Elementos"] == elemento_seleccionado]
+    
+    # Mostrar tabla con st.dataframe
+    st.dataframe(
+        df_filtrado_tabla,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "Nivel": st.column_config.TextColumn("Nivel", width="medium"),
+            "Elementos": st.column_config.TextColumn("Elementos", width="large"),
+            "Total": st.column_config.NumberColumn("Total", format="%.2f"),
+            "% Avance": st.column_config.NumberColumn("% Avance", format="%.2f%%")
+        }
     )
+    
+    # Mostrar resumen
+    if not df_filtrado_tabla.empty:
+        st.metric("Total General", f"{df_filtrado_tabla['Total'].sum():.2f}")
 
 def mostrar_avance_semanal():
     """Muestra el avance semanal de hormigones"""
@@ -258,37 +266,45 @@ def mostrar_avance_semanal():
                     pivot_semanal[col_actual] - pivot_semanal[col_anterior]
                 )
     
-    # Configurar AgGrid
-    gb = GridOptionsBuilder.from_dataframe(pivot_semanal)
-    gb.configure_grid_options(
-        domLayout='normal',
-        rowGroupPanelShow='always'
-    )
-    gb.configure_column("Nivel", rowGroup=True, hide=True)
-    gb.configure_column("Elementos", rowGroup=True, hide=True)
-    
-    # Configurar columnas numéricas
+    # Formatear columnas numéricas
     for col in pivot_semanal.select_dtypes(include=[np.number]).columns:
-        gb.configure_column(
-            col,
-            type=["numericColumn", "numberColumnFilter"],
-            valueFormatter="value.toLocaleString('es-CL', {minimumFractionDigits: 2, maximumFractionDigits: 2})"
-        )
-    
-    grid_options = gb.build()
+        pivot_semanal[col] = pivot_semanal[col].round(2)
     
     # Mostrar tabla
     st.subheader("Avance Semanal Hormigones")
-    grid_response = AgGrid(
-        pivot_semanal,
-        gridOptions=grid_options,
-        data_return_mode='AS_INPUT',
-        update_mode='MODEL_CHANGED',
-        fit_columns_on_grid_load=True,
-        theme='streamlit',
-        height=400,
-        allow_unsafe_jscode=True
+    
+    # Agregar filtros
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        niveles = ["Todos"] + sorted(df_semana["Nivel"].unique().tolist())
+        nivel_seleccionado = st.selectbox("Filtrar por Nivel:", niveles, key="semanal_nivel")
+    
+    with col2:
+        elementos = ["Todos"] + sorted(df_semana["Elementos"].unique().tolist())
+        elemento_seleccionado = st.selectbox("Filtrar por Elemento:", elementos, key="semanal_elemento")
+    
+    # Aplicar filtros
+    df_filtrado_tabla = pivot_semanal.copy()
+    if nivel_seleccionado != "Todos":
+        df_filtrado_tabla = df_filtrado_tabla[df_filtrado_tabla["Nivel"] == nivel_seleccionado]
+    if elemento_seleccionado != "Todos":
+        df_filtrado_tabla = df_filtrado_tabla[df_filtrado_tabla["Elementos"] == elemento_seleccionado]
+    
+    # Mostrar tabla con st.dataframe
+    st.dataframe(
+        df_filtrado_tabla,
+        use_container_width=True,
+        hide_index=True
     )
+    
+    # Mostrar gráfico de tendencia
+    if len(fechas) >= 2:
+        st.subheader("Tendencia Semanal")
+        df_tendencia = df_semana.groupby("Fecha")["VolumenHA"].sum().reset_index()
+        fig = px.line(df_tendencia, x="Fecha", y="VolumenHA", 
+                     title="Evolución del Volumen de Hormigón por Semana")
+        st.plotly_chart(fig, use_container_width=True)
 
 def mostrar_trisemanal():
     """Muestra comparación trisemanal"""
@@ -358,37 +374,53 @@ def mostrar_trisemanal():
         if col_actual in pivot_trisemanal.columns and col_anterior in pivot_trisemanal.columns:
             pivot_trisemanal["Diferencia"] = pivot_trisemanal[col_actual] - pivot_trisemanal[col_anterior]
     
-    # Configurar AgGrid
-    gb = GridOptionsBuilder.from_dataframe(pivot_trisemanal)
-    gb.configure_grid_options(
-        domLayout='normal',
-        rowGroupPanelShow='always'
-    )
-    gb.configure_column("Nivel", rowGroup=True, hide=True)
-    gb.configure_column("Elementos", rowGroup=True, hide=True)
-    
-    # Configurar columnas numéricas
+    # Formatear columnas numéricas
     for col in pivot_trisemanal.select_dtypes(include=[np.number]).columns:
-        gb.configure_column(
-            col,
-            type=["numericColumn", "numberColumnFilter"],
-            valueFormatter="value.toLocaleString('es-CL', {minimumFractionDigits: 2, maximumFractionDigits: 2})"
-        )
-    
-    grid_options = gb.build()
+        pivot_trisemanal[col] = pivot_trisemanal[col].round(2)
     
     # Mostrar tabla
     st.subheader("Comparación Trisemanal")
-    grid_response = AgGrid(
-        pivot_trisemanal,
-        gridOptions=grid_options,
-        data_return_mode='AS_INPUT',
-        update_mode='MODEL_CHANGED',
-        fit_columns_on_grid_load=True,
-        theme='streamlit',
-        height=400,
-        allow_unsafe_jscode=True
+    
+    # Agregar filtros
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        niveles = ["Todos"] + sorted(df_semana["Nivel"].unique().tolist())
+        nivel_seleccionado = st.selectbox("Filtrar por Nivel:", niveles, key="trisemanal_nivel")
+    
+    with col2:
+        elementos = ["Todos"] + sorted(df_semana["Elementos"].unique().tolist())
+        elemento_seleccionado = st.selectbox("Filtrar por Elemento:", elementos, key="trisemanal_elemento")
+    
+    # Aplicar filtros
+    df_filtrado_tabla = pivot_trisemanal.copy()
+    if nivel_seleccionado != "Todos":
+        df_filtrado_tabla = df_filtrado_tabla[df_filtrado_tabla["Nivel"] == nivel_seleccionado]
+    if elemento_seleccionado != "Todos":
+        df_filtrado_tabla = df_filtrado_tabla[df_filtrado_tabla["Elementos"] == elemento_seleccionado]
+    
+    # Mostrar tabla con st.dataframe
+    st.dataframe(
+        df_filtrado_tabla,
+        use_container_width=True,
+        hide_index=True
     )
+    
+    # Mostrar resumen de diferencias
+    if "Diferencia" in df_filtrado_tabla.columns:
+        st.subheader("Resumen de Diferencias")
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            st.metric("Diferencia Total", f"{df_filtrado_tabla['Diferencia'].sum():.2f}")
+        
+        with col2:
+            positivas = df_filtrado_tabla[df_filtrado_tabla['Diferencia'] > 0]['Diferencia'].sum()
+            st.metric("Diferencias Positivas", f"{positivas:.2f}")
+        
+        with col3:
+            negativas = df_filtrado_tabla[df_filtrado_tabla['Diferencia'] < 0]['Diferencia'].sum()
+            st.metric("Diferencias Negativas", f"{negativas:.2f}")
 
 # Función principal
 def main():
