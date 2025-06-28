@@ -326,7 +326,7 @@ def cargar_archivos_semanales():
     return [], None
 
 def crear_tabla_interactiva(df, titulo, columna_volumen="VolumenHA", tab_key=""):
-    """Crea una tabla interactiva con AgGrid, jerarquía expandible por Nivel y Elementos como matriz, mostrando solo el valor correspondiente (VolumenHA, AreaMoldaje o Cuantia) según el tipo de tabla. El resumen general muestra solo el total correspondiente y el % de avance (Si/Total*100)."""
+    """Crea una tabla interactiva con AgGrid, jerarquía expandible por Nivel y Elementos como matriz, mostrando solo el valor correspondiente (VolumenHA, AreaMoldaje o Cuantia) según el tipo de tabla. El resumen general muestra solo el total correspondiente y el % de avance real (Si/Total*100 en avance, no en conteo)."""
     from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, DataReturnMode
 
     if df.empty:
@@ -351,7 +351,7 @@ def crear_tabla_interactiva(df, titulo, columna_volumen="VolumenHA", tab_key="")
         return
 
     # Verificar columnas necesarias
-    required_columns = ["Nivel", "Elementos", param_bool]
+    required_columns = ["Nivel", "Elementos", param_bool, valor_col]
     missing_columns = [col for col in required_columns if col not in df.columns]
     if missing_columns:
         st.error(f"Faltan las siguientes columnas en los datos: {', '.join(missing_columns)}")
@@ -361,8 +361,9 @@ def crear_tabla_interactiva(df, titulo, columna_volumen="VolumenHA", tab_key="")
     # Filtrar filas válidas
     df_filtrado = df[df["Nivel"].notna() & (df["Nivel"].astype(str).str.strip() != "")]
     df_filtrado = df_filtrado[df_filtrado["Elementos"].notna() & (df_filtrado["Elementos"].astype(str).str.strip() != "")]
+    df_filtrado = df_filtrado[df_filtrado[valor_col].notna() & (df_filtrado[valor_col].astype(str).str.strip() != "")]
     if df_filtrado.empty:
-        st.warning("No hay datos con niveles y elementos válidos")
+        st.warning("No hay datos con niveles, elementos y valores válidos")
         return
 
     # Normalizar valores del parámetro booleano
@@ -370,22 +371,23 @@ def crear_tabla_interactiva(df, titulo, columna_volumen="VolumenHA", tab_key="")
     # Considerar 'sí' como positivo, el resto como 'no'
     df_filtrado["Es_Si"] = np.where(df_filtrado[param_bool].isin(["si", "sí", "true", "1"]), 1, 0)
     df_filtrado["Es_No"] = 1 - df_filtrado["Es_Si"]
+    df_filtrado[valor_col] = df_filtrado[valor_col].astype(float)
+
+    # Calcular avance real para Si y No
+    df_filtrado["Avance_Si"] = np.where(df_filtrado["Es_Si"] == 1, df_filtrado[valor_col], 0)
+    df_filtrado["Avance_No"] = np.where(df_filtrado["Es_No"] == 1, df_filtrado[valor_col], 0)
 
     # Agrupar por Nivel y Elementos
-    agg_dict = {
-        "Si": ("Es_Si", "sum"),
-        "No": ("Es_No", "sum")
-    }
-    if valor_col in df_filtrado.columns:
-        agg_dict[valor_col] = (valor_col, "sum")
-    resumen = df_filtrado.groupby(["Nivel", "Elementos"]).agg(**agg_dict).reset_index()
-    resumen["Total"] = resumen["Si"] + resumen["No"]
-    resumen["Si%"] = (resumen["Si"] / resumen["Total"] * 100).round(2)
-    resumen["No%"] = (resumen["No"] / resumen["Total"] * 100).round(2)
-
-    # Formatear columna de valor a 2 decimales si existe
-    if valor_col in resumen.columns:
-        resumen[valor_col] = resumen[valor_col].astype(float).round(2)
+    resumen = df_filtrado.groupby(["Nivel", "Elementos"]).agg(
+        Si=("Avance_Si", "sum"),
+        No=("Avance_No", "sum"),
+        Total=(valor_col, "sum")
+    ).reset_index()
+    resumen["Si%"] = np.where(resumen["Total"] > 0, (resumen["Si"] / resumen["Total"] * 100).round(2), 0)
+    resumen["No%"] = np.where(resumen["Total"] > 0, (resumen["No"] / resumen["Total"] * 100).round(2), 0)
+    resumen[valor_col] = resumen["Total"].round(2)
+    resumen["Si"] = resumen["Si"].round(2)
+    resumen["No"] = resumen["No"].round(2)
 
     st.subheader(titulo)
 
@@ -409,13 +411,12 @@ def crear_tabla_interactiva(df, titulo, columna_volumen="VolumenHA", tab_key="")
     gb.configure_default_column(resizable=True, filterable=True, sortable=True, editable=False)
     gb.configure_column("Nivel", rowGroup=True, rowGroupIndex=0)  # visible
     gb.configure_column("Elementos", rowGroup=True, rowGroupIndex=1)  # visible
-    gb.configure_column("Si", type=["numericColumn", "numberColumnFilter"], width=80, valueFormatter="value.toFixed(0)")
+    gb.configure_column("Si", type=["numericColumn", "numberColumnFilter"], width=100, valueFormatter="value.toFixed(2)")
     gb.configure_column("Si%", type=["numericColumn", "numberColumnFilter"], width=100, valueFormatter="value.toFixed(2) + '%'", cellStyle={"color": "green"})
-    gb.configure_column("No", type=["numericColumn", "numberColumnFilter"], width=80, valueFormatter="value.toFixed(0)")
+    gb.configure_column("No", type=["numericColumn", "numberColumnFilter"], width=100, valueFormatter="value.toFixed(2)")
     gb.configure_column("No%", type=["numericColumn", "numberColumnFilter"], width=100, valueFormatter="value.toFixed(2) + '%'", cellStyle={"color": "red"})
-    gb.configure_column("Total", type=["numericColumn", "numberColumnFilter"], width=100, valueFormatter="value.toFixed(0)")
-    if valor_col in df_filtrado_tabla.columns:
-        gb.configure_column(valor_col, type=["numericColumn", "numberColumnFilter"], width=120, valueFormatter="value.toFixed(2)")
+    gb.configure_column("Total", type=["numericColumn", "numberColumnFilter"], width=120, valueFormatter="value.toFixed(2)")
+    gb.configure_column(valor_col, type=["numericColumn", "numberColumnFilter"], width=120, valueFormatter="value.toFixed(2)")
     gb.configure_grid_options(
         domLayout='normal',
         enableRangeSelection=True,
@@ -441,14 +442,13 @@ def crear_tabla_interactiva(df, titulo, columna_volumen="VolumenHA", tab_key="")
         st.subheader("📊 Resumen General")
         cols = st.columns(5)
         with cols[0]:
-            st.metric("Total Elementos", int(df_filtrado_tabla["Total"].sum()))
+            st.metric("Total Avance", f"{df_filtrado_tabla['Total'].sum():.2f}")
         with cols[1]:
-            st.metric("Completados (Sí)", int(df_filtrado_tabla["Si"].sum()))
+            st.metric(f"Avance {valor_label} (Sí)", f"{df_filtrado_tabla['Si'].sum():.2f}")
         with cols[2]:
-            st.metric("Pendientes (No)", int(df_filtrado_tabla["No"].sum()))
+            st.metric(f"Avance {valor_label} (No)", f"{df_filtrado_tabla['No'].sum():.2f}")
         with cols[3]:
-            if valor_col in df_filtrado_tabla.columns:
-                st.metric(valor_label, f"{df_filtrado_tabla[valor_col].sum():.2f}")
+            st.metric(valor_label, f"{df_filtrado_tabla[valor_col].sum():.2f}")
         with cols[4]:
             total = df_filtrado_tabla["Total"].sum()
             si = df_filtrado_tabla["Si"].sum()
