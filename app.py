@@ -997,6 +997,7 @@ def leer_archivo_local(filepath):
 
 # Función principal
 def main():
+    st.markdown("# DASHBOARD CONTROL AVANCE OBRA GRUESA Y TERMINACIONES")
     st.sidebar.header("Menú Principal")
     if 'menu_seleccionado' not in st.session_state:
         st.session_state['menu_seleccionado'] = 'HORMIGONES'
