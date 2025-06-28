@@ -998,14 +998,20 @@ def leer_archivo_local(filepath):
 # Función principal
 def main():
     st.sidebar.header("Menú Principal")
-    menu_principal = st.sidebar.radio("Sección", ["HORMIGONES", "ARQUITECTURA"], key="menu_principal")
+    menu_seleccionado = None
+    submenu = None
+    submenu_arq = None
 
-    if menu_principal == "HORMIGONES":
-        submenu = st.sidebar.radio(
-            "Hormigones",
-            ["Avance general", "Avance semanal", "Trisemanal"],
-            key="submenu_hormigones"
-        )
+    with st.sidebar:
+        with st.expander("HORMIGONES", expanded=True):
+            submenu = st.radio("Hormigones", ["AVANCE GENERAL OG", "AVANCE SEMANAL OG", "TRISEMANAL OG"], key="submenu_hormigones")
+            menu_seleccionado = "HORMIGONES"
+        with st.expander("ARQUITECTURA", expanded=False):
+            submenu_arq = st.radio("Arquitectura", ["TABIQUES", "PAVIMENTOS", "CIELOS", "REVESTIMIENTOS"], key="submenu_arquitectura")
+            if st.session_state.get("submenu_arquitectura"):
+                menu_seleccionado = "ARQUITECTURA"
+
+    if menu_seleccionado == "HORMIGONES":
         st.title(f"Hormigones - {submenu}")
         use_local_files = st.sidebar.checkbox(
             "📁 Usar archivos locales (ignorar Google Drive)",
@@ -1021,18 +1027,13 @@ def main():
         if df is None:
             st.error("No se pudieron cargar los datos")
             return
-        if submenu == "Avance general":
+        if submenu == "AVANCE GENERAL OG":
             crear_tabla_interactiva(df, "Avance de Hormigones", "VolumenHA", tab_key="hormigones_general")
-        elif submenu == "Avance semanal":
+        elif submenu == "AVANCE SEMANAL OG":
             mostrar_avance_semanal(use_local_files)
-        elif submenu == "Trisemanal":
+        elif submenu == "TRISEMANAL OG":
             mostrar_trisemanal(use_local_files)
-    elif menu_principal == "ARQUITECTURA":
-        submenu_arq = st.sidebar.radio(
-            "Arquitectura",
-            ["TABIQUES", "PAVIMENTOS", "CIELOS", "REVESTIMIENTOS"],
-            key="submenu_arquitectura"
-        )
+    elif menu_seleccionado == "ARQUITECTURA":
         st.title(f"Arquitectura - {submenu_arq}")
         st.info(f"Vista de {submenu_arq} en desarrollo. Aquí podrás agregar la lógica y visualización específica para {submenu_arq}.")
 
