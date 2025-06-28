@@ -326,7 +326,7 @@ def cargar_archivos_semanales():
     return [], None
 
 def crear_tabla_interactiva(df, titulo, columna_volumen="VolumenHA", tab_key=""):
-    """Crea una tabla interactiva con AgGrid, jerarquía expandible por Nivel y Elementos como matriz, mostrando solo el valor correspondiente (VolumenHA, AreaMoldaje o Cuantia) según el tipo de tabla. El resumen general muestra solo el total correspondiente y el % de avance real (Si/Total*100 en avance, no en conteo)."""
+    """Crea una tabla interactiva con AgGrid, jerarquía expandible por Nivel y Elementos como matriz, mostrando solo el valor correspondiente (VolumenHA, AreaMoldaje o Cuantia) según el tipo de tabla. El resumen general muestra solo el total correspondiente y el % de avance real (Si/Total*100 en avance, no en conteo). La columna Total está oculta en la tabla pero se usa para los cálculos y el resumen."""
     from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, DataReturnMode
 
     if df.empty:
@@ -415,7 +415,7 @@ def crear_tabla_interactiva(df, titulo, columna_volumen="VolumenHA", tab_key="")
     gb.configure_column("Si%", type=["numericColumn", "numberColumnFilter"], width=100, valueFormatter="value.toFixed(2) + '%'", cellStyle={"color": "green"})
     gb.configure_column("No", type=["numericColumn", "numberColumnFilter"], width=100, valueFormatter="value.toFixed(2)")
     gb.configure_column("No%", type=["numericColumn", "numberColumnFilter"], width=100, valueFormatter="value.toFixed(2) + '%'", cellStyle={"color": "red"})
-    gb.configure_column("Total", type=["numericColumn", "numberColumnFilter"], width=120, valueFormatter="value.toFixed(2)")
+    gb.configure_column("Total", type=["numericColumn", "numberColumnFilter"], width=120, valueFormatter="value.toFixed(2)", hide=True)
     gb.configure_column(valor_col, type=["numericColumn", "numberColumnFilter"], width=120, valueFormatter="value.toFixed(2)")
     gb.configure_grid_options(
         domLayout='normal',
@@ -997,125 +997,44 @@ def leer_archivo_local(filepath):
 
 # Función principal
 def main():
-    # Configuración en sidebar
-    st.sidebar.header("⚙️ Configuración")
-    
-    # Opción para forzar uso de archivos locales
-    use_local_files = st.sidebar.checkbox(
-        "📁 Usar archivos locales (ignorar Google Drive)",
-        key="main_local_checkbox",
-        help="Marca esta opción si quieres usar archivos locales en lugar de Google Drive"
-    )
-    
-    if use_local_files:
-        st.sidebar.info("📁 Modo archivos locales activado")
-        # Verificar archivos locales
-        if not os.path.exists("AO_GENERAL.txt"):
-            st.sidebar.error("❌ No se encontró AO_GENERAL.txt")
+    st.sidebar.header("Menú Principal")
+    menu_principal = st.sidebar.radio("Sección", ["HORMIGONES", "ARQUITECTURA"], key="menu_principal")
+
+    if menu_principal == "HORMIGONES":
+        submenu = st.sidebar.radio(
+            "Hormigones",
+            ["Avance general", "Avance semanal", "Trisemanal"],
+            key="submenu_hormigones"
+        )
+        st.title(f"Hormigones - {submenu}")
+        use_local_files = st.sidebar.checkbox(
+            "📁 Usar archivos locales (ignorar Google Drive)",
+            key="main_local_checkbox",
+            help="Marca esta opción si quieres usar archivos locales en lugar de Google Drive"
+        )
+        if use_local_files:
+            st.sidebar.info("📁 Modo archivos locales activado")
+        if use_local_files:
+            df = cargar_datos_local()
         else:
-            st.sidebar.success("✅ AO_GENERAL.txt encontrado")
-        
-        if not os.path.exists("REPORTE SEMANAL"):
-            st.sidebar.warning("⚠️ No se encontró carpeta REPORTE SEMANAL")
-        else:
-            weekly_files = [f for f in os.listdir("REPORTE SEMANAL") if f.endswith('_AO_GENERAL.txt')]
-            if weekly_files:
-                st.sidebar.success(f"✅ {len(weekly_files)} archivos semanales encontrados")
-            else:
-                st.sidebar.warning("⚠️ No se encontraron archivos semanales")
-    
-    # Debug: Verificar que los secretos estén configurados (solo si no se usan archivos locales)
-    if not use_local_files:
-        try:
-            # Verificar que existan los secretos necesarios
-            required_secrets = ["GOOGLE_CREDENTIALS", "FILE_ID_GENERAL", "FOLDER_ID_SEMANAL"]
-            missing_secrets = []
-            
-            for secret in required_secrets:
-                if secret not in st.secrets:
-                    missing_secrets.append(secret)
-            
-            if missing_secrets:
-                st.error(f"Faltan los siguientes secretos: {', '.join(missing_secrets)}")
-                st.info("Configura estos secretos en Streamlit Cloud > Settings > Secrets")
-                st.info("💡 Alternativamente, puedes usar archivos locales:")
-                st.info("- Coloca AO_GENERAL.txt en la raíz del proyecto")
-                st.info("- Coloca los archivos semanales en la carpeta 'REPORTE SEMANAL'")
-                return
-            
-            st.success("✅ Todos los secretos configurados")
-        
-        except Exception as e:
-            st.error(f"Error al verificar configuración: {e}")
+            df = cargar_datos()
+        if df is None:
+            st.error("No se pudieron cargar los datos")
             return
-    
-    # Verificar archivos locales como alternativa
-    local_files_exist = False
-    if os.path.exists("AO_GENERAL.txt"):
-        st.info("📁 Archivo local AO_GENERAL.txt encontrado")
-        local_files_exist = True
-    
-    if os.path.exists("REPORTE SEMANAL"):
-        weekly_files = [f for f in os.listdir("REPORTE SEMANAL") if f.endswith('_AO_GENERAL.txt')]
-        if weekly_files:
-            st.info(f"📁 Carpeta local REPORTE SEMANAL encontrada con {len(weekly_files)} archivos")
-            local_files_exist = True
-    
-    # Cargar datos
-    if use_local_files:
-        # Forzar uso de archivos locales
-        df = cargar_datos_local()
-    else:
-        df = cargar_datos()
-    
-    if df is None:
-        st.error("No se pudieron cargar los datos")
-        if local_files_exist:
-            st.info("💡 Se detectaron archivos locales. La aplicación intentará usarlos automáticamente.")
-        else:
-            st.info("💡 Para usar archivos locales:")
-            st.info("1. Coloca AO_GENERAL.txt en la raíz del proyecto")
-            st.info("2. Coloca los archivos semanales en la carpeta 'REPORTE SEMANAL'")
-        return
-    
-    # Debug: Mostrar información sobre los datos
-    st.success(f"✅ Datos cargados exitosamente: {len(df)} filas")
-    st.info(f"Columnas disponibles: {', '.join(df.columns.tolist())}")
-    
-    # Mostrar primeras filas para debug
-    with st.expander("🔍 Ver datos cargados (Debug)"):
-        st.write("Primeras 5 filas:")
-        st.dataframe(df.head(), use_container_width=True)
-        
-        st.write("Información del DataFrame:")
-        st.write(f"- Filas: {len(df)}")
-        st.write(f"- Columnas: {len(df.columns)}")
-        st.write(f"- Columnas con datos: {df.columns.tolist()}")
-    
-    # Crear pestañas
-    tabs = st.tabs([
-        "📊 Avance General",
-        "📈 Avance Semanal",
-        "🔄 Avance Trisemanal"
-    ])
-
-    # Pestaña Avance General
-    with tabs[0]:
-        st.header("📊 Avance General de Obra")
-        st.markdown("### Hormigones")
-        crear_tabla_interactiva(df, "Avance de Hormigones", "VolumenHA", tab_key="hormigones_general")
-        st.markdown("### Moldajes")
-        crear_tabla_interactiva(df, "Avance de Moldajes", "AreaMoldaje", tab_key="moldajes_general")
-        st.markdown("### Enfierraduras")
-        crear_tabla_interactiva(df, "Avance de Enfierraduras", "Cuantia", tab_key="enfierraduras_general")
-
-    # Pestaña Avance Semanal
-    with tabs[1]:
-        mostrar_avance_semanal(use_local_files)
-
-    # Pestaña Avance Trisemanal
-    with tabs[2]:
-        mostrar_trisemanal(use_local_files)
+        if submenu == "Avance general":
+            crear_tabla_interactiva(df, "Avance de Hormigones", "VolumenHA", tab_key="hormigones_general")
+        elif submenu == "Avance semanal":
+            mostrar_avance_semanal(use_local_files)
+        elif submenu == "Trisemanal":
+            mostrar_trisemanal(use_local_files)
+    elif menu_principal == "ARQUITECTURA":
+        submenu_arq = st.sidebar.radio(
+            "Arquitectura",
+            ["TABIQUES", "PAVIMENTOS", "CIELOS", "REVESTIMIENTOS"],
+            key="submenu_arquitectura"
+        )
+        st.title(f"Arquitectura - {submenu_arq}")
+        st.info(f"Vista de {submenu_arq} en desarrollo. Aquí podrás agregar la lógica y visualización específica para {submenu_arq}.")
 
 # Ejecutar aplicación
 if __name__ == "__main__":
