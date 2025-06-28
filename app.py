@@ -998,21 +998,41 @@ def leer_archivo_local(filepath):
 # Función principal
 def main():
     st.sidebar.header("Menú Principal")
-    menu_seleccionado = None
-    submenu = None
-    submenu_arq = None
+    # Control de navegación: solo un menú y submenú activos
+    if 'menu_seleccionado' not in st.session_state:
+        st.session_state['menu_seleccionado'] = 'HORMIGONES'
+    if 'submenu_hormigones' not in st.session_state:
+        st.session_state['submenu_hormigones'] = 'AVANCE GENERAL OG'
+    if 'submenu_arquitectura' not in st.session_state:
+        st.session_state['submenu_arquitectura'] = 'TABIQUES'
 
     with st.sidebar:
-        with st.expander("HORMIGONES", expanded=True):
-            submenu = st.radio("Hormigones", ["AVANCE GENERAL OG", "AVANCE SEMANAL OG", "TRISEMANAL OG"], key="submenu_hormigones")
-            menu_seleccionado = "HORMIGONES"
-        with st.expander("ARQUITECTURA", expanded=False):
-            submenu_arq = st.radio("Arquitectura", ["TABIQUES", "PAVIMENTOS", "CIELOS", "REVESTIMIENTOS"], key="submenu_arquitectura")
-            if st.session_state.get("submenu_arquitectura"):
-                menu_seleccionado = "ARQUITECTURA"
+        exp_hormigones = st.expander("HORMIGONES", expanded=st.session_state['menu_seleccionado'] == 'HORMIGONES')
+        exp_arquitectura = st.expander("ARQUITECTURA", expanded=st.session_state['menu_seleccionado'] == 'ARQUITECTURA')
+        with exp_hormigones:
+            if st.button("Ir a Hormigones", key="btn_hormigones"):
+                st.session_state['menu_seleccionado'] = 'HORMIGONES'
+            submenu = st.radio(
+                "Hormigones",
+                ["AVANCE GENERAL OG", "AVANCE SEMANAL OG", "TRISEMANAL OG"],
+                key="submenu_hormigones",
+                index=["AVANCE GENERAL OG", "AVANCE SEMANAL OG", "TRISEMANAL OG"].index(st.session_state['submenu_hormigones'])
+            )
+            st.session_state['submenu_hormigones'] = submenu
+        with exp_arquitectura:
+            if st.button("Ir a Arquitectura", key="btn_arquitectura"):
+                st.session_state['menu_seleccionado'] = 'ARQUITECTURA'
+            submenu_arq = st.radio(
+                "Arquitectura",
+                ["TABIQUES", "PAVIMENTOS", "CIELOS", "REVESTIMIENTOS"],
+                key="submenu_arquitectura",
+                index=["TABIQUES", "PAVIMENTOS", "CIELOS", "REVESTIMIENTOS"].index(st.session_state['submenu_arquitectura'])
+            )
+            st.session_state['submenu_arquitectura'] = submenu_arq
 
-    if menu_seleccionado == "HORMIGONES":
-        st.title(f"Hormigones - {submenu}")
+    # Mostrar contenido según la navegación
+    if st.session_state['menu_seleccionado'] == "HORMIGONES":
+        st.title(f"Hormigones - {st.session_state['submenu_hormigones']}")
         use_local_files = st.sidebar.checkbox(
             "📁 Usar archivos locales (ignorar Google Drive)",
             key="main_local_checkbox",
@@ -1027,15 +1047,15 @@ def main():
         if df is None:
             st.error("No se pudieron cargar los datos")
             return
-        if submenu == "AVANCE GENERAL OG":
+        if st.session_state['submenu_hormigones'] == "AVANCE GENERAL OG":
             crear_tabla_interactiva(df, "Avance de Hormigones", "VolumenHA", tab_key="hormigones_general")
-        elif submenu == "AVANCE SEMANAL OG":
+        elif st.session_state['submenu_hormigones'] == "AVANCE SEMANAL OG":
             mostrar_avance_semanal(use_local_files)
-        elif submenu == "TRISEMANAL OG":
+        elif st.session_state['submenu_hormigones'] == "TRISEMANAL OG":
             mostrar_trisemanal(use_local_files)
-    elif menu_seleccionado == "ARQUITECTURA":
-        st.title(f"Arquitectura - {submenu_arq}")
-        st.info(f"Vista de {submenu_arq} en desarrollo. Aquí podrás agregar la lógica y visualización específica para {submenu_arq}.")
+    elif st.session_state['menu_seleccionado'] == "ARQUITECTURA":
+        st.title(f"Arquitectura - {st.session_state['submenu_arquitectura']}")
+        st.info(f"Vista de {st.session_state['submenu_arquitectura']} en desarrollo. Aquí podrás agregar la lógica y visualización específica para {st.session_state['submenu_arquitectura']}.")
 
 # Ejecutar aplicación
 if __name__ == "__main__":
