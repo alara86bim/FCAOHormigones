@@ -1039,7 +1039,12 @@ def main():
             st.error("No se pudieron cargar los datos")
             return
         if submenu == "AVANCE GENERAL OG":
+            st.header("Hormigones")
             crear_tabla_interactiva(df, "Avance de Hormigones", "VolumenHA", tab_key="hormigones_general")
+            st.header("Moldajes")
+            crear_tabla_interactiva(df, "Avance de Moldajes", "AreaMoldaje", tab_key="moldajes_general")
+            st.header("Enfierraduras")
+            crear_tabla_interactiva(df, "Avance de Enfierraduras", "Cuantia", tab_key="enfierraduras_general")
         elif submenu == "AVANCE SEMANAL OG":
             mostrar_avance_semanal(use_local_files)
         elif submenu == "TRISEMANAL OG":
