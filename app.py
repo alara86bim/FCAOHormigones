@@ -326,20 +326,26 @@ def cargar_archivos_semanales():
     return [], None
 
 def crear_tabla_interactiva(df, titulo, columna_volumen="VolumenHA", tab_key=""):
-    """Crea una tabla interactiva con AgGrid, jerarquía expandible por Nivel y Elementos como matriz, mostrando también las columnas Nivel y Elementos y los valores de VolumenHA, AreaMoldaje, Cuantia con 2 decimales si existen. El resumen general muestra los totales y el % de avance (Si/Total*100)."""
+    """Crea una tabla interactiva con AgGrid, jerarquía expandible por Nivel y Elementos como matriz, mostrando solo el valor correspondiente (VolumenHA, AreaMoldaje o Cuantia) según el tipo de tabla. El resumen general muestra solo el total correspondiente y el % de avance (Si/Total*100)."""
     from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, DataReturnMode
 
     if df.empty:
         st.warning("No hay datos para mostrar")
         return
 
-    # Determinar el parámetro booleano según el tipo de tabla
+    # Determinar el parámetro booleano y columna de valor según el tipo de tabla
     if "Hormigon" in titulo or "Hormigon" in columna_volumen:
         param_bool = "Hormigonado"
+        valor_col = "VolumenHA"
+        valor_label = "VolumenHA"
     elif "Moldaje" in titulo or "Moldaje" in columna_volumen:
         param_bool = "Moldaje"
+        valor_col = "AreaMoldaje"
+        valor_label = "Area Moldaje"
     elif "Enfierradura" in titulo or "Enfierradura" in columna_volumen:
         param_bool = "Enfierradura"
+        valor_col = "Cuantia"
+        valor_label = "Cuantía"
     else:
         st.error("No se pudo determinar el parámetro booleano para esta tabla.")
         return
@@ -366,21 +372,20 @@ def crear_tabla_interactiva(df, titulo, columna_volumen="VolumenHA", tab_key="")
     df_filtrado["Es_No"] = 1 - df_filtrado["Es_Si"]
 
     # Agrupar por Nivel y Elementos
-    resumen = df_filtrado.groupby(["Nivel", "Elementos"]).agg(
-        Si=("Es_Si", "sum"),
-        No=("Es_No", "sum"),
-        VolumenHA=("VolumenHA", "sum") if "VolumenHA" in df_filtrado.columns else (lambda x: np.nan),
-        AreaMoldaje=("AreaMoldaje", "sum") if "AreaMoldaje" in df_filtrado.columns else (lambda x: np.nan),
-        Cuantia=("Cuantia", "sum") if "Cuantia" in df_filtrado.columns else (lambda x: np.nan),
-    ).reset_index()
+    agg_dict = {
+        "Si": ("Es_Si", "sum"),
+        "No": ("Es_No", "sum")
+    }
+    if valor_col in df_filtrado.columns:
+        agg_dict[valor_col] = (valor_col, "sum")
+    resumen = df_filtrado.groupby(["Nivel", "Elementos"]).agg(**agg_dict).reset_index()
     resumen["Total"] = resumen["Si"] + resumen["No"]
     resumen["Si%"] = (resumen["Si"] / resumen["Total"] * 100).round(2)
     resumen["No%"] = (resumen["No"] / resumen["Total"] * 100).round(2)
 
-    # Formatear VolumenHA, AreaMoldaje, Cuantia a 2 decimales si existen
-    for col in ["VolumenHA", "AreaMoldaje", "Cuantia"]:
-        if col in resumen.columns:
-            resumen[col] = resumen[col].astype(float).round(2)
+    # Formatear columna de valor a 2 decimales si existe
+    if valor_col in resumen.columns:
+        resumen[valor_col] = resumen[valor_col].astype(float).round(2)
 
     st.subheader(titulo)
 
@@ -409,12 +414,8 @@ def crear_tabla_interactiva(df, titulo, columna_volumen="VolumenHA", tab_key="")
     gb.configure_column("No", type=["numericColumn", "numberColumnFilter"], width=80, valueFormatter="value.toFixed(0)")
     gb.configure_column("No%", type=["numericColumn", "numberColumnFilter"], width=100, valueFormatter="value.toFixed(2) + '%'", cellStyle={"color": "red"})
     gb.configure_column("Total", type=["numericColumn", "numberColumnFilter"], width=100, valueFormatter="value.toFixed(0)")
-    if "VolumenHA" in df_filtrado_tabla.columns:
-        gb.configure_column("VolumenHA", type=["numericColumn", "numberColumnFilter"], width=120, valueFormatter="value.toFixed(2)")
-    if "AreaMoldaje" in df_filtrado_tabla.columns:
-        gb.configure_column("AreaMoldaje", type=["numericColumn", "numberColumnFilter"], width=120, valueFormatter="value.toFixed(2)")
-    if "Cuantia" in df_filtrado_tabla.columns:
-        gb.configure_column("Cuantia", type=["numericColumn", "numberColumnFilter"], width=120, valueFormatter="value.toFixed(2)")
+    if valor_col in df_filtrado_tabla.columns:
+        gb.configure_column(valor_col, type=["numericColumn", "numberColumnFilter"], width=120, valueFormatter="value.toFixed(2)")
     gb.configure_grid_options(
         domLayout='normal',
         enableRangeSelection=True,
@@ -438,7 +439,7 @@ def crear_tabla_interactiva(df, titulo, columna_volumen="VolumenHA", tab_key="")
     # Métricas generales
     if not df_filtrado_tabla.empty:
         st.subheader("📊 Resumen General")
-        cols = st.columns(7)
+        cols = st.columns(5)
         with cols[0]:
             st.metric("Total Elementos", int(df_filtrado_tabla["Total"].sum()))
         with cols[1]:
@@ -446,15 +447,9 @@ def crear_tabla_interactiva(df, titulo, columna_volumen="VolumenHA", tab_key="")
         with cols[2]:
             st.metric("Pendientes (No)", int(df_filtrado_tabla["No"].sum()))
         with cols[3]:
-            if "VolumenHA" in df_filtrado_tabla.columns:
-                st.metric("VolumenHA", f"{df_filtrado_tabla['VolumenHA'].sum():.2f}")
+            if valor_col in df_filtrado_tabla.columns:
+                st.metric(valor_label, f"{df_filtrado_tabla[valor_col].sum():.2f}")
         with cols[4]:
-            if "AreaMoldaje" in df_filtrado_tabla.columns:
-                st.metric("AreaMoldaje", f"{df_filtrado_tabla['AreaMoldaje'].sum():.2f}")
-        with cols[5]:
-            if "Cuantia" in df_filtrado_tabla.columns:
-                st.metric("Cuantia", f"{df_filtrado_tabla['Cuantia'].sum():.2f}")
-        with cols[6]:
             total = df_filtrado_tabla["Total"].sum()
             si = df_filtrado_tabla["Si"].sum()
             if total > 0:
