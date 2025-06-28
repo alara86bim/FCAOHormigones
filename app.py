@@ -45,24 +45,17 @@ def get_drive_service():
         # Obtener las credenciales de los secretos
         creds_input = st.secrets["GOOGLE_CREDENTIALS"]
         
-        # Debug: mostrar el tipo de datos recibido
-        st.write(f"Tipo de credenciales recibidas: {type(creds_input)}")
-        
         # Convertir a diccionario según el tipo de entrada
         if isinstance(creds_input, str):
             # Si es string, intentar parsear como JSON
             try:
                 creds_dict = json.loads(creds_input)
-                st.success("✅ Credenciales parseadas desde string JSON")
             except json.JSONDecodeError as e:
-                st.error(f"❌ Error al parsear JSON: {e}")
                 return None
         elif isinstance(creds_input, dict):
             # Si ya es un diccionario, usarlo directamente
             creds_dict = creds_input
-            st.success("✅ Credenciales recibidas como diccionario")
         else:
-            st.error(f"❌ Tipo de credenciales no soportado: {type(creds_input)}")
             return None
         
         # Verificar que tenga los campos necesarios
@@ -70,7 +63,6 @@ def get_drive_service():
         missing_fields = [field for field in required_fields if field not in creds_dict]
         
         if missing_fields:
-            st.error(f"❌ Faltan campos requeridos en las credenciales: {missing_fields}")
             return None
         
         # Crear una copia limpia de las credenciales
@@ -92,12 +84,8 @@ def get_drive_service():
         # Si el private_key tiene \\n, reemplazarlo por \n
         if "\\n" in private_key:
             private_key = private_key.replace("\\n", "\n")
-            st.success("✅ Private key con \\n convertido a \\n")
         
         clean_creds["private_key"] = private_key
-        
-        # Debug: mostrar las primeras líneas del private_key
-        st.write(f"Private key preview: {private_key[:100]}...")
         
         # Crear las credenciales
         creds = service_account.Credentials.from_service_account_info(
@@ -111,15 +99,11 @@ def get_drive_service():
         # Probar la conexión
         try:
             service.files().list(pageSize=1).execute()
-            st.success("✅ Conexión con Google Drive exitosa")
             return service
         except Exception as e:
-            st.error(f"❌ Error al conectar con Google Drive API: {e}")
             return None
             
     except Exception as e:
-        st.error(f"❌ Error general al configurar Google Drive: {e}")
-        st.error("Verifica que las credenciales estén en formato JSON válido")
         return None
 
 def download_file(service, file_id):
@@ -135,7 +119,6 @@ def download_file(service, file_id):
         return StringIO(content_str)
         
     except Exception as e:
-        st.error(f"Error leyendo archivo desde Google Drive: {e}")
         return None
 
 def list_files_in_folder(service, folder_id):
@@ -148,7 +131,6 @@ def list_files_in_folder(service, folder_id):
         ).execute()
         return results.get('files', [])
     except Exception as e:
-        st.error(f"Error al listar archivos: {e}")
         return []
 
 # Cargar datos desde Google Drive
@@ -181,10 +163,9 @@ def cargar_datos():
                         errors='coerce'
                     )
                 
-                st.success("✅ Datos cargados desde Google Drive")
                 return df
         except Exception as e:
-            st.warning(f"⚠️ Error al cargar desde Google Drive: {e}")
+            return None
     
     # Fallback: intentar cargar desde archivo local
     try:
@@ -208,12 +189,11 @@ def cargar_datos():
                     errors='coerce'
                 )
             
-            st.success("✅ Datos cargados desde archivo local (fallback)")
             return df
         else:
-            st.error("❌ No se encontró el archivo local AO_GENERAL.txt")
+            return None
     except Exception as e:
-        st.error(f"❌ Error al cargar archivo local: {e}")
+        return None
     
     return None
 
@@ -263,10 +243,9 @@ def cargar_archivos_semanales():
             )
             
             if archivos_fechas:
-                st.success("✅ Archivos semanales cargados desde Google Drive")
                 return archivos_fechas, service
         except Exception as e:
-            st.warning(f"⚠️ Error al cargar archivos semanales desde Google Drive: {e}")
+            return None
     
     # Fallback: intentar cargar desde carpeta local
     try:
@@ -316,21 +295,17 @@ def cargar_archivos_semanales():
             )
             
             if archivos_fechas:
-                st.success("✅ Archivos semanales cargados desde carpeta local (fallback)")
                 return archivos_fechas, None  # None indica que es local
         else:
-            st.warning("⚠️ No se encontró la carpeta local REPORTE SEMANAL")
+            return None
     except Exception as e:
-        st.error(f"❌ Error al cargar archivos locales: {e}")
-    
-    return [], None
+        return None
 
 def crear_tabla_interactiva(df, titulo, columna_volumen="VolumenHA", tab_key=""):
     """Crea una tabla interactiva con AgGrid, jerarquía expandible por Nivel y Elementos como matriz, mostrando solo el valor correspondiente (VolumenHA, AreaMoldaje o Cuantia) según el tipo de tabla. El resumen general muestra solo el total correspondiente y el % de avance real (Si/Total*100 en avance, no en conteo). La columna Total está oculta en la tabla pero se usa para los cálculos y el resumen."""
     from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, DataReturnMode
 
     if df.empty:
-        st.warning("No hay datos para mostrar")
         return
 
     # Determinar el parámetro booleano y columna de valor según el tipo de tabla
@@ -347,15 +322,12 @@ def crear_tabla_interactiva(df, titulo, columna_volumen="VolumenHA", tab_key="")
         valor_col = "Cuantia"
         valor_label = "Cuantía"
     else:
-        st.error("No se pudo determinar el parámetro booleano para esta tabla.")
         return
 
     # Verificar columnas necesarias
     required_columns = ["Nivel", "Elementos", param_bool, valor_col]
     missing_columns = [col for col in required_columns if col not in df.columns]
     if missing_columns:
-        st.error(f"Faltan las siguientes columnas en los datos: {', '.join(missing_columns)}")
-        st.info("Columnas disponibles: " + ", ".join(df.columns.tolist()))
         return
 
     # Filtrar filas válidas
@@ -363,7 +335,6 @@ def crear_tabla_interactiva(df, titulo, columna_volumen="VolumenHA", tab_key="")
     df_filtrado = df_filtrado[df_filtrado["Elementos"].notna() & (df_filtrado["Elementos"].astype(str).str.strip() != "")]
     df_filtrado = df_filtrado[df_filtrado[valor_col].notna() & (df_filtrado[valor_col].astype(str).str.strip() != "")]
     if df_filtrado.empty:
-        st.warning("No hay datos con niveles, elementos y valores válidos")
         return
 
     # Normalizar valores del parámetro booleano
@@ -465,7 +436,6 @@ def mostrar_avance_semanal(use_local_files=False):
         archivos_fechas, service = cargar_archivos_semanales()
     
     if not archivos_fechas:
-        st.warning("No se encontraron archivos semanales")
         return
     
     # Procesar archivos
@@ -482,7 +452,6 @@ def mostrar_avance_semanal(use_local_files=False):
             
             if not fh:
                 nombre_archivo = f if use_local_files else f['name']
-                st.warning(f"No se pudo leer el archivo: {nombre_archivo}")
                 continue
                 
             # Leer el archivo con el formato correcto
@@ -500,7 +469,6 @@ def mostrar_avance_semanal(use_local_files=False):
             # Verificar que exista la columna VolumenHA
             if "VolumenHA" not in dfw.columns:
                 nombre_archivo = f if use_local_files else f['name']
-                st.warning(f"Archivo {nombre_archivo} no tiene columna VolumenHA. Columnas disponibles: {list(dfw.columns)}")
                 continue
             
             # Convertir VolumenHA a numérico
@@ -514,7 +482,6 @@ def mostrar_avance_semanal(use_local_files=False):
                 dfw = dfw[dfw["Hormigonado"] == "Sí"]
             else:
                 nombre_archivo = f if use_local_files else f['name']
-                st.warning(f"Archivo {nombre_archivo} no tiene columna Hormigonado")
                 continue
             
             # Solo filas con Nivel y Elementos válidos
@@ -523,7 +490,6 @@ def mostrar_avance_semanal(use_local_files=False):
                 dfw = dfw[dfw["Elementos"].notna() & (dfw["Elementos"].astype(str).str.strip() != "")]
             else:
                 nombre_archivo = f if use_local_files else f['name']
-                st.warning(f"Archivo {nombre_archivo} no tiene columnas Nivel o Elementos")
                 continue
             
             # Agrupar por Nivel y Elementos
@@ -533,11 +499,9 @@ def mostrar_avance_semanal(use_local_files=False):
             
         except Exception as e:
             nombre_archivo = f if use_local_files else f['name']
-            st.error(f"Error procesando archivo {nombre_archivo}: {e}")
             continue
     
     if not lista_df:
-        st.warning("No hay datos de hormigones para mostrar")
         return
     
     # Unir todos los resultados
@@ -590,7 +554,6 @@ def mostrar_avance_semanal(use_local_files=False):
             niveles = ["Todos"] + sorted(niveles_clean)
             nivel_seleccionado = st.selectbox("Filtrar por Nivel:", niveles, key="semanal_nivel")
         except Exception as e:
-            st.error(f"Error al cargar niveles: {e}")
             nivel_seleccionado = "Todos"
     
     with col2:
@@ -600,7 +563,6 @@ def mostrar_avance_semanal(use_local_files=False):
             elementos = ["Todos"] + sorted(elementos_clean)
             elemento_seleccionado = st.selectbox("Filtrar por Elemento:", elementos, key="semanal_elemento")
         except Exception as e:
-            st.error(f"Error al cargar elementos: {e}")
             elemento_seleccionado = "Todos"
     
     # Aplicar filtros
@@ -611,7 +573,7 @@ def mostrar_avance_semanal(use_local_files=False):
         if elemento_seleccionado != "Todos":
             df_filtrado_tabla = df_filtrado_tabla[df_filtrado_tabla["Elementos"] == elemento_seleccionado]
     except Exception as e:
-        st.error(f"Error al aplicar filtros: {e}")
+        pass
     
     # Mostrar tabla con jerarquías expandibles
     try:
@@ -642,7 +604,6 @@ def mostrar_avance_semanal(use_local_files=False):
             column_config=column_config
         )
     except Exception as e:
-        st.error(f"Error al mostrar tabla: {e}")
         st.dataframe(df_filtrado_tabla, use_container_width=True)
     
     # Mostrar métricas
@@ -669,7 +630,7 @@ def mostrar_avance_semanal(use_local_files=False):
                         st.metric(f"Total {primera_fecha.strftime('%d/%m/%Y')}", f"{primer_total:.2f}")
                         
         except Exception as e:
-            st.error(f"Error al calcular métricas: {e}")
+            pass
     
     # Mostrar gráfico de tendencia
     if len(fechas) >= 2:
@@ -687,7 +648,6 @@ def mostrar_trisemanal(use_local_files=False):
         archivos_fechas, service = cargar_archivos_semanales()
     
     if len(archivos_fechas) < 2:
-        st.warning("Se necesitan al menos 2 archivos semanales para la comparación trisemanal")
         return
     
     # Tomar solo los 2 últimos archivos
@@ -707,7 +667,6 @@ def mostrar_trisemanal(use_local_files=False):
             
             if not fh:
                 nombre_archivo = f if use_local_files else f['name']
-                st.warning(f"No se pudo leer el archivo: {nombre_archivo}")
                 continue
                 
             # Leer el archivo con el formato correcto
@@ -725,7 +684,6 @@ def mostrar_trisemanal(use_local_files=False):
             # Verificar que exista la columna VolumenHA
             if "VolumenHA" not in dfw.columns:
                 nombre_archivo = f if use_local_files else f['name']
-                st.warning(f"Archivo {nombre_archivo} no tiene columna VolumenHA. Columnas disponibles: {list(dfw.columns)}")
                 continue
             
             # Convertir VolumenHA a numérico
@@ -739,7 +697,6 @@ def mostrar_trisemanal(use_local_files=False):
                 dfw = dfw[dfw["Hormigonado"] == "Sí"]
             else:
                 nombre_archivo = f if use_local_files else f['name']
-                st.warning(f"Archivo {nombre_archivo} no tiene columna Hormigonado")
                 continue
             
             # Solo filas con Nivel y Elementos válidos
@@ -748,7 +705,6 @@ def mostrar_trisemanal(use_local_files=False):
                 dfw = dfw[dfw["Elementos"].notna() & (dfw["Elementos"].astype(str).str.strip() != "")]
             else:
                 nombre_archivo = f if use_local_files else f['name']
-                st.warning(f"Archivo {nombre_archivo} no tiene columnas Nivel o Elementos")
                 continue
             
             # Filtrar por FC_CON_TRISEMANAL = 'Semana 01' por defecto
@@ -762,11 +718,9 @@ def mostrar_trisemanal(use_local_files=False):
             
         except Exception as e:
             nombre_archivo = f if use_local_files else f['name']
-            st.error(f"Error procesando archivo {nombre_archivo}: {e}")
             continue
     
     if not lista_df:
-        st.warning("No hay datos para la comparación trisemanal")
         return
     
     # Unir todos los resultados
@@ -816,7 +770,6 @@ def mostrar_trisemanal(use_local_files=False):
             niveles = ["Todos"] + sorted(niveles_clean)
             nivel_seleccionado = st.selectbox("Filtrar por Nivel:", niveles, key="trisemanal_nivel")
         except Exception as e:
-            st.error(f"Error al cargar niveles: {e}")
             nivel_seleccionado = "Todos"
     
     with col2:
@@ -826,7 +779,6 @@ def mostrar_trisemanal(use_local_files=False):
             elementos = ["Todos"] + sorted(elementos_clean)
             elemento_seleccionado = st.selectbox("Filtrar por Elemento:", elementos, key="trisemanal_elemento")
         except Exception as e:
-            st.error(f"Error al cargar elementos: {e}")
             elemento_seleccionado = "Todos"
     
     # Aplicar filtros
@@ -837,7 +789,7 @@ def mostrar_trisemanal(use_local_files=False):
         if elemento_seleccionado != "Todos":
             df_filtrado_tabla = df_filtrado_tabla[df_filtrado_tabla["Elementos"] == elemento_seleccionado]
     except Exception as e:
-        st.error(f"Error al aplicar filtros: {e}")
+        pass
     
     # Mostrar tabla con jerarquías expandibles
     try:
@@ -867,7 +819,6 @@ def mostrar_trisemanal(use_local_files=False):
             column_config=column_config
         )
     except Exception as e:
-        st.error(f"Error al mostrar tabla: {e}")
         st.dataframe(df_filtrado_tabla, use_container_width=True)
     
     # Mostrar resumen de diferencias
@@ -910,7 +861,7 @@ def mostrar_trisemanal(use_local_files=False):
                         st.metric(f"Total {primera_fecha.strftime('%d/%m/%Y')}", f"{primer_total:.2f}")
                         
         except Exception as e:
-            st.error(f"Error al calcular métricas: {e}")
+            pass
 
 @st.cache_data(ttl=3600)  # Cache por 1 hora
 def cargar_datos_local():
@@ -936,13 +887,10 @@ def cargar_datos_local():
                     errors='coerce'
                 )
             
-            st.success("✅ Datos cargados desde archivo local")
             return df
         else:
-            st.error("❌ No se encontró el archivo local AO_GENERAL.txt")
             return None
     except Exception as e:
-        st.error(f"❌ Error al cargar archivo local: {e}")
         return None
 
 def cargar_archivos_semanales_local():
@@ -950,7 +898,6 @@ def cargar_archivos_semanales_local():
     try:
         carpeta = "REPORTE SEMANAL"
         if not os.path.exists(carpeta):
-            st.error(f"❌ Carpeta '{carpeta}' no encontrada")
             return [], None
         
         archivos = []
@@ -975,13 +922,11 @@ def cargar_archivos_semanales_local():
         archivos.sort(key=lambda x: x[1])
         
         if not archivos:
-            st.warning("❌ No se encontraron archivos semanales en la carpeta local")
             return [], None
         
         return archivos, None  # None indica que es local
         
     except Exception as e:
-        st.error(f"❌ Error al cargar archivos locales: {e}")
         return [], None
 
 def leer_archivo_local(filepath):
@@ -992,7 +937,6 @@ def leer_archivo_local(filepath):
         from io import StringIO
         return StringIO(content)
     except Exception as e:
-        st.error(f"Error leyendo archivo local {filepath}: {e}")
         return None
 
 # Función principal
@@ -1034,7 +978,6 @@ def main():
         else:
             df = cargar_datos()
         if df is None:
-            st.error("No se pudieron cargar los datos")
             return
         if submenu == "AVANCE GENERAL OG":
             st.header("Hormigones")
