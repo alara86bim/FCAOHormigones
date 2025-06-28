@@ -286,8 +286,29 @@ def cargar_archivos_semanales():
             archivos = [f for f in files if f['name'].endswith('_AO_GENERAL.txt')]
             
             def extraer_fecha(nombre):
-                m = re.match(r"(\d{2}-\d{2}-\d{4})_AO_GENERAL.txt", nombre)
-                return pd.to_datetime(m.group(1), dayfirst=True) if m else None
+                # Intentar diferentes formatos de fecha
+                patterns = [
+                    r"(\d{2}-\d{2}-\d{4})_AO_GENERAL\.txt",  # DD-MM-YYYY
+                    r"(\d{2}-\d{2}-\d{2})_AO_GENERAL\.txt",  # DD-MM-YY
+                    r"(\d{4}-\d{2}-\d{2})_AO_GENERAL\.txt",  # YYYY-MM-DD
+                ]
+                
+                for pattern in patterns:
+                    m = re.match(pattern, nombre)
+                    if m:
+                        fecha_str = m.group(1)
+                        try:
+                            # Intentar diferentes formatos de fecha
+                            if len(fecha_str.split('-')[2]) == 4:  # YYYY
+                                if len(fecha_str.split('-')[0]) == 2:  # DD-MM-YYYY
+                                    return pd.to_datetime(fecha_str, format='%d-%m-%Y', dayfirst=True)
+                                else:  # YYYY-MM-DD
+                                    return pd.to_datetime(fecha_str, format='%Y-%m-%d')
+                            else:  # DD-MM-YY
+                                return pd.to_datetime(fecha_str, format='%d-%m-%y', dayfirst=True)
+                        except:
+                            continue
+                return None
             
             archivos_fechas = [(f, extraer_fecha(f['name'])) for f in archivos]
             archivos_fechas = sorted(
@@ -318,8 +339,29 @@ def cargar_archivos_semanales():
                     archivos.append(file_obj)
             
             def extraer_fecha(nombre):
-                m = re.match(r"(\d{2}-\d{2}-\d{4})_AO_GENERAL.txt", nombre)
-                return pd.to_datetime(m.group(1), dayfirst=True) if m else None
+                # Intentar diferentes formatos de fecha
+                patterns = [
+                    r"(\d{2}-\d{2}-\d{4})_AO_GENERAL\.txt",  # DD-MM-YYYY
+                    r"(\d{2}-\d{2}-\d{2})_AO_GENERAL\.txt",  # DD-MM-YY
+                    r"(\d{4}-\d{2}-\d{2})_AO_GENERAL\.txt",  # YYYY-MM-DD
+                ]
+                
+                for pattern in patterns:
+                    m = re.match(pattern, nombre)
+                    if m:
+                        fecha_str = m.group(1)
+                        try:
+                            # Intentar diferentes formatos de fecha
+                            if len(fecha_str.split('-')[2]) == 4:  # YYYY
+                                if len(fecha_str.split('-')[0]) == 2:  # DD-MM-YYYY
+                                    return pd.to_datetime(fecha_str, format='%d-%m-%Y', dayfirst=True)
+                                else:  # YYYY-MM-DD
+                                    return pd.to_datetime(fecha_str, format='%Y-%m-%d')
+                            else:  # DD-MM-YY
+                                return pd.to_datetime(fecha_str, format='%d-%m-%y', dayfirst=True)
+                        except:
+                            continue
+                return None
             
             archivos_fechas = [(f, extraer_fecha(f['name'])) for f in archivos]
             archivos_fechas = sorted(
@@ -430,15 +472,8 @@ def crear_tabla_interactiva(df, titulo, columna_volumen="VolumenHA", tab_key="")
         except Exception as e:
             st.error(f"Error al calcular total: {e}")
 
-def mostrar_avance_semanal():
+def mostrar_avance_semanal(use_local_files=False):
     """Muestra el avance semanal de hormigones"""
-    # Verificar si se debe usar archivos locales
-    use_local_files = st.sidebar.checkbox(
-        "📁 Usar archivos locales (ignorar Google Drive)",
-        key="main_local_checkbox",
-        help="Marca esta opción si quieres usar archivos locales en lugar de Google Drive"
-    )
-    
     if use_local_files:
         archivos_fechas, service = cargar_archivos_semanales_local()
     else:
@@ -451,31 +486,58 @@ def mostrar_avance_semanal():
     # Procesar archivos
     lista_df = []
     for f, fecha in archivos_fechas:
-        fh = download_file(service, f['id'])
-        if not fh:
-            continue
+        try:
+            fh = download_file(service, f['id'])
+            if not fh:
+                st.warning(f"No se pudo descargar el archivo: {f['name']}")
+                continue
+                
+            # Leer el archivo con el formato correcto
+            dfw = pd.read_csv(fh, sep='\t', header=1, dtype=str, quoting=3)  # QUOTE_NONE
+            dfw = dfw.dropna(how="all")
             
-        dfw = pd.read_csv(fh, sep='\t', header=1, dtype=str)
-        dfw = dfw.dropna(how="all")
-        dfw = dfw.rename(columns=lambda x: x.strip().replace('"', ''))
-        
-        if "VolumenHA" in dfw.columns:
+            # Limpiar columnas (remover comillas)
+            dfw = dfw.rename(columns=lambda x: x.strip().replace('"', '') if isinstance(x, str) else x)
+            
+            # Limpiar datos (remover comillas de los valores)
+            for col in dfw.columns:
+                if dfw[col].dtype == 'object':
+                    dfw[col] = dfw[col].astype(str).str.replace('"', '')
+            
+            # Verificar que exista la columna VolumenHA
+            if "VolumenHA" not in dfw.columns:
+                st.warning(f"Archivo {f['name']} no tiene columna VolumenHA. Columnas disponibles: {list(dfw.columns)}")
+                continue
+            
+            # Convertir VolumenHA a numérico
             dfw["VolumenHA"] = pd.to_numeric(
                 dfw["VolumenHA"].str.replace(",", ".", regex=False), 
                 errors='coerce'
             )
-        
-        # Solo Hormigonado = 'Sí'
-        dfw = dfw[dfw["Hormigonado"] == "Sí"]
-        
-        # Solo filas con Nivel y Elementos válidos
-        dfw = dfw[dfw["Nivel"].notna() & (dfw["Nivel"].astype(str).str.strip() != "")]
-        dfw = dfw[dfw["Elementos"].notna() & (dfw["Elementos"].astype(str).str.strip() != "")]
-        
-        # Agrupar por Nivel y Elementos
-        resumen = dfw.groupby(["Nivel", "Elementos"])["VolumenHA"].sum().reset_index()
-        resumen["Fecha"] = fecha
-        lista_df.append(resumen)
+            
+            # Solo Hormigonado = 'Sí'
+            if "Hormigonado" in dfw.columns:
+                dfw = dfw[dfw["Hormigonado"] == "Sí"]
+            else:
+                st.warning(f"Archivo {f['name']} no tiene columna Hormigonado")
+                continue
+            
+            # Solo filas con Nivel y Elementos válidos
+            if "Nivel" in dfw.columns and "Elementos" in dfw.columns:
+                dfw = dfw[dfw["Nivel"].notna() & (dfw["Nivel"].astype(str).str.strip() != "")]
+                dfw = dfw[dfw["Elementos"].notna() & (dfw["Elementos"].astype(str).str.strip() != "")]
+            else:
+                st.warning(f"Archivo {f['name']} no tiene columnas Nivel o Elementos")
+                continue
+            
+            # Agrupar por Nivel y Elementos
+            resumen = dfw.groupby(["Nivel", "Elementos"])["VolumenHA"].sum().reset_index()
+            resumen["Fecha"] = fecha
+            lista_df.append(resumen)
+            
+        except Exception as e:
+            st.error(f"Error procesando archivo {f['name']}: {e}")
+            continue
     
     if not lista_df:
         st.warning("No hay datos de hormigones para mostrar")
@@ -563,15 +625,8 @@ def mostrar_avance_semanal():
                      title="Evolución del Volumen de Hormigón por Semana")
         st.plotly_chart(fig, use_container_width=True)
 
-def mostrar_trisemanal():
+def mostrar_trisemanal(use_local_files=False):
     """Muestra comparación trisemanal"""
-    # Verificar si se debe usar archivos locales
-    use_local_files = st.sidebar.checkbox(
-        "📁 Usar archivos locales (ignorar Google Drive)",
-        key="trisemanal_local_checkbox",
-        help="Marca esta opción si quieres usar archivos locales en lugar de Google Drive"
-    )
-    
     if use_local_files:
         archivos_fechas, service = cargar_archivos_semanales_local()
     else:
@@ -587,35 +642,62 @@ def mostrar_trisemanal():
     # Procesar archivos
     lista_df = []
     for f, fecha in archivos_fechas:
-        fh = download_file(service, f['id'])
-        if not fh:
-            continue
+        try:
+            fh = download_file(service, f['id'])
+            if not fh:
+                st.warning(f"No se pudo descargar el archivo: {f['name']}")
+                continue
+                
+            # Leer el archivo con el formato correcto
+            dfw = pd.read_csv(fh, sep='\t', header=1, dtype=str, quoting=3)  # QUOTE_NONE
+            dfw = dfw.dropna(how="all")
             
-        dfw = pd.read_csv(fh, sep='\t', header=1, dtype=str)
-        dfw = dfw.dropna(how="all")
-        dfw = dfw.rename(columns=lambda x: x.strip().replace('"', ''))
-        
-        if "VolumenHA" in dfw.columns:
+            # Limpiar columnas (remover comillas)
+            dfw = dfw.rename(columns=lambda x: x.strip().replace('"', '') if isinstance(x, str) else x)
+            
+            # Limpiar datos (remover comillas de los valores)
+            for col in dfw.columns:
+                if dfw[col].dtype == 'object':
+                    dfw[col] = dfw[col].astype(str).str.replace('"', '')
+            
+            # Verificar que exista la columna VolumenHA
+            if "VolumenHA" not in dfw.columns:
+                st.warning(f"Archivo {f['name']} no tiene columna VolumenHA. Columnas disponibles: {list(dfw.columns)}")
+                continue
+            
+            # Convertir VolumenHA a numérico
             dfw["VolumenHA"] = pd.to_numeric(
                 dfw["VolumenHA"].str.replace(",", ".", regex=False), 
                 errors='coerce'
             )
-        
-        # Solo Hormigonado = 'Sí'
-        dfw = dfw[dfw["Hormigonado"] == "Sí"]
-        
-        # Solo filas con Nivel y Elementos válidos
-        dfw = dfw[dfw["Nivel"].notna() & (dfw["Nivel"].astype(str).str.strip() != "")]
-        dfw = dfw[dfw["Elementos"].notna() & (dfw["Elementos"].astype(str).str.strip() != "")]
-        
-        # Filtrar por FC_CON_TRISEMANAL = 'Semana 01' por defecto
-        if "FC_CON_TRISEMANAL" in dfw.columns:
-            dfw = dfw[dfw["FC_CON_TRISEMANAL"] == "Semana 01"]
-        
-        # Agrupar por Nivel y Elementos
-        resumen = dfw.groupby(["Nivel", "Elementos"])["VolumenHA"].sum().reset_index()
-        resumen["Fecha"] = fecha
-        lista_df.append(resumen)
+            
+            # Solo Hormigonado = 'Sí'
+            if "Hormigonado" in dfw.columns:
+                dfw = dfw[dfw["Hormigonado"] == "Sí"]
+            else:
+                st.warning(f"Archivo {f['name']} no tiene columna Hormigonado")
+                continue
+            
+            # Solo filas con Nivel y Elementos válidos
+            if "Nivel" in dfw.columns and "Elementos" in dfw.columns:
+                dfw = dfw[dfw["Nivel"].notna() & (dfw["Nivel"].astype(str).str.strip() != "")]
+                dfw = dfw[dfw["Elementos"].notna() & (dfw["Elementos"].astype(str).str.strip() != "")]
+            else:
+                st.warning(f"Archivo {f['name']} no tiene columnas Nivel o Elementos")
+                continue
+            
+            # Filtrar por FC_CON_TRISEMANAL = 'Semana 01' por defecto
+            if "FC_CON_TRISEMANAL" in dfw.columns:
+                dfw = dfw[dfw["FC_CON_TRISEMANAL"] == "Semana 01"]
+            
+            # Agrupar por Nivel y Elementos
+            resumen = dfw.groupby(["Nivel", "Elementos"])["VolumenHA"].sum().reset_index()
+            resumen["Fecha"] = fecha
+            lista_df.append(resumen)
+            
+        except Exception as e:
+            st.error(f"Error procesando archivo {f['name']}: {e}")
+            continue
     
     if not lista_df:
         st.warning("No hay datos para la comparación trisemanal")
@@ -760,8 +842,29 @@ def cargar_archivos_semanales_local():
                     archivos.append(file_obj)
             
             def extraer_fecha(nombre):
-                m = re.match(r"(\d{2}-\d{2}-\d{4})_AO_GENERAL.txt", nombre)
-                return pd.to_datetime(m.group(1), dayfirst=True) if m else None
+                # Intentar diferentes formatos de fecha
+                patterns = [
+                    r"(\d{2}-\d{2}-\d{4})_AO_GENERAL\.txt",  # DD-MM-YYYY
+                    r"(\d{2}-\d{2}-\d{2})_AO_GENERAL\.txt",  # DD-MM-YY
+                    r"(\d{4}-\d{2}-\d{2})_AO_GENERAL\.txt",  # YYYY-MM-DD
+                ]
+                
+                for pattern in patterns:
+                    m = re.match(pattern, nombre)
+                    if m:
+                        fecha_str = m.group(1)
+                        try:
+                            # Intentar diferentes formatos de fecha
+                            if len(fecha_str.split('-')[2]) == 4:  # YYYY
+                                if len(fecha_str.split('-')[0]) == 2:  # DD-MM-YYYY
+                                    return pd.to_datetime(fecha_str, format='%d-%m-%Y', dayfirst=True)
+                                else:  # YYYY-MM-DD
+                                    return pd.to_datetime(fecha_str, format='%Y-%m-%d')
+                            else:  # DD-MM-YY
+                                return pd.to_datetime(fecha_str, format='%d-%m-%y', dayfirst=True)
+                        except:
+                            continue
+                return None
             
             archivos_fechas = [(f, extraer_fecha(f['name'])) for f in archivos]
             archivos_fechas = sorted(
@@ -895,11 +998,11 @@ def main():
 
     # Pestaña Avance Semanal
     with tabs[1]:
-        mostrar_avance_semanal()
+        mostrar_avance_semanal(use_local_files)
 
     # Pestaña Avance Trisemanal
     with tabs[2]:
-        mostrar_trisemanal()
+        mostrar_trisemanal(use_local_files)
 
 # Ejecutar aplicación
 if __name__ == "__main__":
