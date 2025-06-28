@@ -326,244 +326,111 @@ def cargar_archivos_semanales():
     return [], None
 
 def crear_tabla_interactiva(df, titulo, columna_volumen="VolumenHA", tab_key=""):
-    """Crea una tabla interactiva con st.agrid y agrupación jerárquica por Nivel y Elemento"""
+    """Crea una tabla interactiva con st.agrid agrupada por Nivel y Elementos, usando el parámetro booleano correspondiente."""
+    from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, DataReturnMode
+
     if df.empty:
         st.warning("No hay datos para mostrar")
         return
-    
+
+    # Determinar el parámetro booleano según el tipo de tabla
+    if "Hormigon" in titulo or "Hormigon" in columna_volumen:
+        param_bool = "Hormigonado"
+    elif "Moldaje" in titulo or "Moldaje" in columna_volumen:
+        param_bool = "Moldaje"
+    elif "Enfierradura" in titulo or "Enfierradura" in columna_volumen:
+        param_bool = "Enfierradura"
+    else:
+        st.error("No se pudo determinar el parámetro booleano para esta tabla.")
+        return
+
     # Verificar columnas necesarias
-    required_columns = ["Nivel", "Elementos", columna_volumen]
+    required_columns = ["Nivel", "Elementos", param_bool]
     missing_columns = [col for col in required_columns if col not in df.columns]
     if missing_columns:
         st.error(f"Faltan las siguientes columnas en los datos: {', '.join(missing_columns)}")
         st.info("Columnas disponibles: " + ", ".join(df.columns.tolist()))
         return
-    
+
     # Filtrar filas válidas
     df_filtrado = df[df["Nivel"].notna() & (df["Nivel"].astype(str).str.strip() != "")]
     df_filtrado = df_filtrado[df_filtrado["Elementos"].notna() & (df_filtrado["Elementos"].astype(str).str.strip() != "")]
-    
     if df_filtrado.empty:
         st.warning("No hay datos con niveles y elementos válidos")
         return
-    
-    # Crear tabla pivot con Sí/No basado en si hay volumen
-    if "FC_CON_ESTADO" in df_filtrado.columns:
-        # Si existe FC_CON_ESTADO, usarlo para crear las columnas Sí/No
-        pivot_table = df_filtrado.pivot_table(
-            values=columna_volumen,
-            index=["Nivel", "Elementos"],
-            columns="FC_CON_ESTADO",
-            aggfunc="sum",
-            fill_value=0
-        ).reset_index()
-        
-        # Asegurar que existan las columnas Sí y No
-        if "Sí" not in pivot_table.columns:
-            pivot_table["Sí"] = 0
-        if "No" not in pivot_table.columns:
-            pivot_table["No"] = 0
-            
-    else:
-        # Si no hay FC_CON_ESTADO, crear columnas Sí/No basadas en si hay volumen
-        pivot_table = df_filtrado.groupby(["Nivel", "Elementos"])[columna_volumen].sum().reset_index()
-        pivot_table["Sí"] = np.where(pivot_table[columna_volumen] > 0, 1, 0)
-        pivot_table["No"] = np.where(pivot_table[columna_volumen] == 0, 1, 0)
-        pivot_table = pivot_table.rename(columns={columna_volumen: "Total"})
-    
-    # Calcular totales
-    if "Total" not in pivot_table.columns:
-        numeric_columns = pivot_table.select_dtypes(include=[np.number]).columns
-        numeric_columns = [col for col in numeric_columns if col not in ["Sí", "No"]]
-        if len(numeric_columns) > 0:
-            pivot_table["Total"] = pivot_table[numeric_columns].sum(axis=1)
-        else:
-            pivot_table["Total"] = 0
-    
-    # Calcular porcentajes
-    total_si = pivot_table["Sí"].sum()
-    total_no = pivot_table["No"].sum()
-    total_elements = total_si + total_no
-    
-    if total_elements > 0:
-        pivot_table["Sí%"] = (pivot_table["Sí"] / total_elements * 100).round(2)
-        pivot_table["No%"] = (pivot_table["No"] / total_elements * 100).round(2)
-    else:
-        pivot_table["Sí%"] = 0
-        pivot_table["No%"] = 0
-    
-    # Calcular % Avance del total
-    if "Total" in pivot_table.columns and pivot_table["Total"].sum() > 0:
-        pivot_table["% Avance"] = (pivot_table["Total"] / pivot_table["Total"].sum() * 100).round(2)
-    
-    # Formatear columnas numéricas
-    for col in pivot_table.select_dtypes(include=[np.number]).columns:
-        if col not in ["Sí", "No"]:  # No redondear las columnas Sí/No que son enteros
-            pivot_table[col] = pivot_table[col].round(2)
-    
-    # Ordenar por Nivel y Elemento para jerarquía visual
-    pivot_table = pivot_table.sort_values(["Nivel", "Elementos"]).reset_index(drop=True)
-    
+
+    # Normalizar valores del parámetro booleano
+    df_filtrado[param_bool] = df_filtrado[param_bool].astype(str).str.strip().str.lower()
+    # Considerar 'sí' como positivo, el resto como 'no'
+    df_filtrado["Es_Si"] = np.where(df_filtrado[param_bool].isin(["si", "sí", "true", "1"]), 1, 0)
+    df_filtrado["Es_No"] = 1 - df_filtrado["Es_Si"]
+
+    # Agrupar por Nivel y Elementos
+    resumen = df_filtrado.groupby(["Nivel", "Elementos"]).agg(
+        Si=("Es_Si", "sum"),
+        No=("Es_No", "sum"),
+    ).reset_index()
+    resumen["Total"] = resumen["Si"] + resumen["No"]
+    resumen["Si%"] = (resumen["Si"] / resumen["Total"] * 100).round(2)
+    resumen["No%"] = (resumen["No"] / resumen["Total"] * 100).round(2)
+
     st.subheader(titulo)
-    
-    # Agregar filtros
+
+    # Filtros
     col1, col2 = st.columns(2)
-    
     with col1:
-        try:
-            niveles_raw = df_filtrado["Nivel"].dropna().unique()
-            niveles_clean = [str(n).strip() for n in niveles_raw if str(n).strip()]
-            niveles = ["Todos"] + sorted(niveles_clean)
-            nivel_seleccionado = st.selectbox("Filtrar por Nivel:", niveles, key=f"nivel_{tab_key}")
-        except Exception as e:
-            st.error(f"Error al cargar niveles: {e}")
-            nivel_seleccionado = "Todos"
-    
+        niveles = ["Todos"] + sorted(resumen["Nivel"].unique())
+        nivel_seleccionado = st.selectbox("Filtrar por Nivel:", niveles, key=f"nivel_{tab_key}")
     with col2:
-        try:
-            elementos_raw = df_filtrado["Elementos"].dropna().unique()
-            elementos_clean = [str(e).strip() for e in elementos_raw if str(e).strip()]
-            elementos = ["Todos"] + sorted(elementos_clean)
-            elemento_seleccionado = st.selectbox("Filtrar por Elemento:", elementos, key=f"elemento_{tab_key}")
-        except Exception as e:
-            st.error(f"Error al cargar elementos: {e}")
-            elemento_seleccionado = "Todos"
-    
-    # Aplicar filtros
-    df_filtrado_tabla = pivot_table.copy()
-    try:
-        if nivel_seleccionado != "Todos":
-            df_filtrado_tabla = df_filtrado_tabla[df_filtrado_tabla["Nivel"] == nivel_seleccionado]
-        if elemento_seleccionado != "Todos":
-            df_filtrado_tabla = df_filtrado_tabla[df_filtrado_tabla["Elementos"] == elemento_seleccionado]
-    except Exception as e:
-        st.error(f"Error al aplicar filtros: {e}")
-    
-    # Mostrar tabla con st.agrid y agrupación jerárquica
-    try:
-        from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, DataReturnMode
-        
-        # Configurar opciones de la grilla
-        gb = GridOptionsBuilder.from_dataframe(df_filtrado_tabla)
-        gb.configure_default_column(
-            resizable=True,
-            filterable=True,
-            sorteable=True,
-            editable=False
-        )
-        
-        # Configurar agrupación por Nivel y Elementos
-        gb.configure_grid_options(
-            domLayout='normal',
-            rowGroupPanelShow='always',
-            pivotPanelShow='always',
-            enableRangeSelection=True,
-            enableCharts=True,
-            groupDefaultExpanded=1,  # Expandir grupos por defecto
-            groupDisplayType='groupRows'
-        )
-        
-        # Configurar columnas específicas
-        gb.configure_column("Nivel", 
-                           rowGroup=True, 
-                           rowGroupIndex=0,
-                           hide=True,
-                           width=150)
-        gb.configure_column("Elementos", 
-                           rowGroup=True, 
-                           rowGroupIndex=1,
-                           hide=True,
-                           width=200)
-        gb.configure_column("Sí", 
-                           type=["numericColumn", "numberColumnFilter"],
-                           width=80,
-                           valueFormatter="value.toFixed(0)")
-        gb.configure_column("Sí%", 
-                           type=["numericColumn", "numberColumnFilter"],
-                           width=100,
-                           valueFormatter="value.toFixed(2) + '%'")
-        gb.configure_column("No", 
-                           type=["numericColumn", "numberColumnFilter"],
-                           width=80,
-                           valueFormatter="value.toFixed(0)")
-        gb.configure_column("No%", 
-                           type=["numericColumn", "numberColumnFilter"],
-                           width=100,
-                           valueFormatter="value.toFixed(2) + '%'")
-        
-        if "Total" in df_filtrado_tabla.columns:
-            gb.configure_column("Total", 
-                               type=["numericColumn", "numberColumnFilter"],
-                               width=120,
-                               valueFormatter="value.toFixed(2)")
-        
-        if "% Avance" in df_filtrado_tabla.columns:
-            gb.configure_column("% Avance", 
-                               type=["numericColumn", "numberColumnFilter"],
-                               width=120,
-                               valueFormatter="value.toFixed(2) + '%'")
-        
-        # Construir opciones
-        grid_options = gb.build()
-        
-        # Mostrar la grilla
-        grid_response = AgGrid(
-            df_filtrado_tabla,
-            gridOptions=grid_options,
-            data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
-            update_mode=GridUpdateMode.GRID_CHANGED,
-            fit_columns_on_grid_load=True,
-            theme='streamlit',
-            height=400,
-            allow_unsafe_jscode=True
-        )
-        
-    except ImportError:
-        st.error("La librería st-aggrid no está instalada. Instalando...")
-        st.info("Ejecuta: pip install streamlit-aggrid")
-        # Fallback a tabla simple
-        st.dataframe(df_filtrado_tabla, use_container_width=True)
-    except Exception as e:
-        st.error(f"Error al mostrar tabla con aggrid: {e}")
-        # Fallback a tabla simple
-        st.dataframe(df_filtrado_tabla, use_container_width=True)
-    
-    # Mostrar métricas generales
+        elementos = ["Todos"] + sorted(resumen["Elementos"].unique())
+        elemento_seleccionado = st.selectbox("Filtrar por Elemento:", elementos, key=f"elemento_{tab_key}")
+
+    df_filtrado_tabla = resumen.copy()
+    if nivel_seleccionado != "Todos":
+        df_filtrado_tabla = df_filtrado_tabla[df_filtrado_tabla["Nivel"] == nivel_seleccionado]
+    if elemento_seleccionado != "Todos":
+        df_filtrado_tabla = df_filtrado_tabla[df_filtrado_tabla["Elementos"] == elemento_seleccionado]
+
+    # Configurar AgGrid
+    gb = GridOptionsBuilder.from_dataframe(df_filtrado_tabla)
+    gb.configure_default_column(resizable=True, filterable=True, sortable=True, editable=False)
+    gb.configure_column("Nivel", width=150)
+    gb.configure_column("Elementos", width=200)
+    gb.configure_column("Si", type=["numericColumn", "numberColumnFilter"], width=80, valueFormatter="value.toFixed(0)")
+    gb.configure_column("Si%", type=["numericColumn", "numberColumnFilter"], width=100, valueFormatter="value.toFixed(2) + '%'", cellStyle={"color": "green"})
+    gb.configure_column("No", type=["numericColumn", "numberColumnFilter"], width=80, valueFormatter="value.toFixed(0)")
+    gb.configure_column("No%", type=["numericColumn", "numberColumnFilter"], width=100, valueFormatter="value.toFixed(2) + '%'", cellStyle={"color": "red"})
+    gb.configure_column("Total", type=["numericColumn", "numberColumnFilter"], width=100, valueFormatter="value.toFixed(0)")
+    gb.configure_grid_options(
+        domLayout='normal',
+        enableRangeSelection=True,
+        enableCharts=True,
+        groupDisplayType='groupRows',
+        groupDefaultExpanded=-1
+    )
+    grid_options = gb.build()
+
+    AgGrid(
+        df_filtrado_tabla,
+        gridOptions=grid_options,
+        data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
+        update_mode=GridUpdateMode.GRID_CHANGED,
+        fit_columns_on_grid_load=True,
+        theme='streamlit',
+        height=400,
+        allow_unsafe_jscode=True
+    )
+
+    # Métricas generales
     if not df_filtrado_tabla.empty:
         st.subheader("📊 Resumen General")
-        try:
-            col1, col2, col3, col4 = st.columns(4)
-            
-            with col1:
-                if "Total" in df_filtrado_tabla.columns:
-                    total_sum = df_filtrado_tabla['Total'].sum()
-                    st.metric("Total General", f"{total_sum:.2f}")
-                else:
-                    total_elements = df_filtrado_tabla['Sí'].sum() + df_filtrado_tabla['No'].sum()
-                    st.metric("Total Elementos", f"{total_elements}")
-            
-            with col2:
-                si_count = df_filtrado_tabla['Sí'].sum()
-                si_percent = df_filtrado_tabla['Sí%'].mean() if 'Sí%' in df_filtrado_tabla.columns else 0
-                st.metric("Elementos Completados", f"{si_count} ({si_percent:.1f}%)")
-            
-            with col3:
-                no_count = df_filtrado_tabla['No'].sum()
-                no_percent = df_filtrado_tabla['No%'].mean() if 'No%' in df_filtrado_tabla.columns else 0
-                st.metric("Elementos Pendientes", f"{no_count} ({no_percent:.1f}%)")
-            
-            with col4:
-                if "Total" in df_filtrado_tabla.columns and df_filtrado_tabla['Total'].sum() > 0:
-                    total_avance = df_filtrado_tabla['% Avance'].sum() if '% Avance' in df_filtrado_tabla.columns else 0
-                    st.metric("% Avance Total", f"{total_avance:.1f}%")
-                else:
-                    total_elements = df_filtrado_tabla['Sí'].sum() + df_filtrado_tabla['No'].sum()
-                    if total_elements > 0:
-                        avance_percent = (df_filtrado_tabla['Sí'].sum() / total_elements * 100)
-                        st.metric("% Avance", f"{avance_percent:.1f}%")
-                        
-        except Exception as e:
-            st.error(f"Error al calcular métricas: {e}")
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Total Elementos", int(df_filtrado_tabla["Total"].sum()))
+        with col2:
+            st.metric("Completados (Sí)", int(df_filtrado_tabla["Si"].sum()))
+        with col3:
+            st.metric("Pendientes (No)", int(df_filtrado_tabla["No"].sum()))
 
 def mostrar_avance_semanal(use_local_files=False):
     """Muestra el avance semanal de hormigones"""
