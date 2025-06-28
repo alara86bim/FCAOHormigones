@@ -326,7 +326,7 @@ def cargar_archivos_semanales():
     return [], None
 
 def crear_tabla_interactiva(df, titulo, columna_volumen="VolumenHA", tab_key=""):
-    """Crea una tabla interactiva con AgGrid, jerarquía expandible por Nivel y Elementos como matriz, mostrando también las columnas Nivel y Elementos."""
+    """Crea una tabla interactiva con AgGrid, jerarquía expandible por Nivel y Elementos como matriz, mostrando también las columnas Nivel y Elementos y los valores de VolumenHA, AreaMoldaje, Cuantia con 2 decimales si existen. El resumen general muestra los totales y el % de avance (Si/Total*100)."""
     from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, DataReturnMode
 
     if df.empty:
@@ -369,10 +369,18 @@ def crear_tabla_interactiva(df, titulo, columna_volumen="VolumenHA", tab_key="")
     resumen = df_filtrado.groupby(["Nivel", "Elementos"]).agg(
         Si=("Es_Si", "sum"),
         No=("Es_No", "sum"),
+        VolumenHA=("VolumenHA", "sum") if "VolumenHA" in df_filtrado.columns else (lambda x: np.nan),
+        AreaMoldaje=("AreaMoldaje", "sum") if "AreaMoldaje" in df_filtrado.columns else (lambda x: np.nan),
+        Cuantia=("Cuantia", "sum") if "Cuantia" in df_filtrado.columns else (lambda x: np.nan),
     ).reset_index()
     resumen["Total"] = resumen["Si"] + resumen["No"]
     resumen["Si%"] = (resumen["Si"] / resumen["Total"] * 100).round(2)
     resumen["No%"] = (resumen["No"] / resumen["Total"] * 100).round(2)
+
+    # Formatear VolumenHA, AreaMoldaje, Cuantia a 2 decimales si existen
+    for col in ["VolumenHA", "AreaMoldaje", "Cuantia"]:
+        if col in resumen.columns:
+            resumen[col] = resumen[col].astype(float).round(2)
 
     st.subheader(titulo)
 
@@ -394,7 +402,6 @@ def crear_tabla_interactiva(df, titulo, columna_volumen="VolumenHA", tab_key="")
     # Configurar AgGrid para jerarquía expandible y columnas visibles
     gb = GridOptionsBuilder.from_dataframe(df_filtrado_tabla)
     gb.configure_default_column(resizable=True, filterable=True, sortable=True, editable=False)
-    # Agrupación jerárquica real y columnas visibles
     gb.configure_column("Nivel", rowGroup=True, rowGroupIndex=0)  # visible
     gb.configure_column("Elementos", rowGroup=True, rowGroupIndex=1)  # visible
     gb.configure_column("Si", type=["numericColumn", "numberColumnFilter"], width=80, valueFormatter="value.toFixed(0)")
@@ -402,6 +409,12 @@ def crear_tabla_interactiva(df, titulo, columna_volumen="VolumenHA", tab_key="")
     gb.configure_column("No", type=["numericColumn", "numberColumnFilter"], width=80, valueFormatter="value.toFixed(0)")
     gb.configure_column("No%", type=["numericColumn", "numberColumnFilter"], width=100, valueFormatter="value.toFixed(2) + '%'", cellStyle={"color": "red"})
     gb.configure_column("Total", type=["numericColumn", "numberColumnFilter"], width=100, valueFormatter="value.toFixed(0)")
+    if "VolumenHA" in df_filtrado_tabla.columns:
+        gb.configure_column("VolumenHA", type=["numericColumn", "numberColumnFilter"], width=120, valueFormatter="value.toFixed(2)")
+    if "AreaMoldaje" in df_filtrado_tabla.columns:
+        gb.configure_column("AreaMoldaje", type=["numericColumn", "numberColumnFilter"], width=120, valueFormatter="value.toFixed(2)")
+    if "Cuantia" in df_filtrado_tabla.columns:
+        gb.configure_column("Cuantia", type=["numericColumn", "numberColumnFilter"], width=120, valueFormatter="value.toFixed(2)")
     gb.configure_grid_options(
         domLayout='normal',
         enableRangeSelection=True,
@@ -425,13 +438,29 @@ def crear_tabla_interactiva(df, titulo, columna_volumen="VolumenHA", tab_key="")
     # Métricas generales
     if not df_filtrado_tabla.empty:
         st.subheader("📊 Resumen General")
-        col1, col2, col3 = st.columns(3)
-        with col1:
+        cols = st.columns(7)
+        with cols[0]:
             st.metric("Total Elementos", int(df_filtrado_tabla["Total"].sum()))
-        with col2:
+        with cols[1]:
             st.metric("Completados (Sí)", int(df_filtrado_tabla["Si"].sum()))
-        with col3:
+        with cols[2]:
             st.metric("Pendientes (No)", int(df_filtrado_tabla["No"].sum()))
+        with cols[3]:
+            if "VolumenHA" in df_filtrado_tabla.columns:
+                st.metric("VolumenHA", f"{df_filtrado_tabla['VolumenHA'].sum():.2f}")
+        with cols[4]:
+            if "AreaMoldaje" in df_filtrado_tabla.columns:
+                st.metric("AreaMoldaje", f"{df_filtrado_tabla['AreaMoldaje'].sum():.2f}")
+        with cols[5]:
+            if "Cuantia" in df_filtrado_tabla.columns:
+                st.metric("Cuantia", f"{df_filtrado_tabla['Cuantia'].sum():.2f}")
+        with cols[6]:
+            total = df_filtrado_tabla["Total"].sum()
+            si = df_filtrado_tabla["Si"].sum()
+            if total > 0:
+                st.metric("% Avance", f"{(si/total*100):.2f}%")
+            else:
+                st.metric("% Avance", "0.00%")
 
 def mostrar_avance_semanal(use_local_files=False):
     """Muestra el avance semanal de hormigones"""
