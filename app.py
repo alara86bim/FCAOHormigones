@@ -1024,14 +1024,11 @@ def main():
 
     # Mostrar contenido según la navegación
     if st.session_state['menu_seleccionado'] == "HORMIGONES":
-        st.title(f"Hormigones - {submenu}")
         use_local_files = st.sidebar.checkbox(
             "📁 Usar archivos locales (ignorar Google Drive)",
             key="main_local_checkbox",
             help="Marca esta opción si quieres usar archivos locales en lugar de Google Drive"
         )
-        if use_local_files:
-            st.sidebar.info("📁 Modo archivos locales activado")
         if use_local_files:
             df = cargar_datos_local()
         else:
@@ -1052,7 +1049,7 @@ def main():
             mostrar_trisemanal(use_local_files)
     elif st.session_state['menu_seleccionado'] == "ARQUITECTURA":
         st.title(f"Arquitectura - {submenu_arq}")
-        st.info(f"Vista de {submenu_arq} en desarrollo. Aquí podrás agregar la lógica y visualización específica para {submenu_arq}.")
+        # Placeholder vacío para futuras vistas
 
 # Ejecutar aplicación
 if __name__ == "__main__":
