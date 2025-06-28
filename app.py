@@ -326,7 +326,7 @@ def cargar_archivos_semanales():
     return [], None
 
 def crear_tabla_interactiva(df, titulo, columna_volumen="VolumenHA", tab_key=""):
-    """Crea una tabla interactiva con AgGrid, jerarquía expandible por Nivel y Elementos como matriz."""
+    """Crea una tabla interactiva con AgGrid, jerarquía expandible por Nivel y Elementos como matriz, mostrando también las columnas Nivel y Elementos."""
     from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, DataReturnMode
 
     if df.empty:
@@ -391,13 +391,12 @@ def crear_tabla_interactiva(df, titulo, columna_volumen="VolumenHA", tab_key="")
     if elemento_seleccionado != "Todos":
         df_filtrado_tabla = df_filtrado_tabla[df_filtrado_tabla["Elementos"] == elemento_seleccionado]
 
-    # Configurar AgGrid para jerarquía expandible
+    # Configurar AgGrid para jerarquía expandible y columnas visibles
     gb = GridOptionsBuilder.from_dataframe(df_filtrado_tabla)
     gb.configure_default_column(resizable=True, filterable=True, sortable=True, editable=False)
-    # Agrupación jerárquica real
-    gb.configure_column("Nivel", rowGroup=True, rowGroupIndex=0, hide=True)
-    gb.configure_column("Elementos", rowGroup=True, rowGroupIndex=1, hide=True)
-    # Solo mostrar columnas de datos
+    # Agrupación jerárquica real y columnas visibles
+    gb.configure_column("Nivel", rowGroup=True, rowGroupIndex=0)  # visible
+    gb.configure_column("Elementos", rowGroup=True, rowGroupIndex=1)  # visible
     gb.configure_column("Si", type=["numericColumn", "numberColumnFilter"], width=80, valueFormatter="value.toFixed(0)")
     gb.configure_column("Si%", type=["numericColumn", "numberColumnFilter"], width=100, valueFormatter="value.toFixed(2) + '%'", cellStyle={"color": "green"})
     gb.configure_column("No", type=["numericColumn", "numberColumnFilter"], width=80, valueFormatter="value.toFixed(0)")
