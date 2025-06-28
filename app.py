@@ -330,6 +330,7 @@ def crear_tabla_interactiva(df, titulo, columna_volumen="VolumenHA", tab_key="")
     if df.empty:
         st.warning("No hay datos para mostrar")
         return
+    
     # Verificar columnas necesarias
     required_columns = ["Nivel", "Elementos", columna_volumen]
     missing_columns = [col for col in required_columns if col not in df.columns]
@@ -337,24 +338,30 @@ def crear_tabla_interactiva(df, titulo, columna_volumen="VolumenHA", tab_key="")
         st.error(f"Faltan las siguientes columnas en los datos: {', '.join(missing_columns)}")
         st.info("Columnas disponibles: " + ", ".join(df.columns.tolist()))
         return
+    
     # Filtrar filas válidas
     df_filtrado = df[df["Nivel"].notna() & (df["Nivel"].astype(str).str.strip() != "")]
     if df_filtrado.empty:
         st.warning("No hay datos con niveles válidos")
         return
-    # Pivot o agrupación
-    if "FC_CON_ESTADO" in df_filtrado.columns:
-        pivot_table = df_filtrado.pivot_table(
-            values=columna_volumen,
-            index=["Nivel", "Elementos"],
-            columns="FC_CON_ESTADO",
-            aggfunc="sum",
-            fill_value=0
-        ).reset_index()
-    else:
-        st.info("No se encontró la columna 'FC_CON_ESTADO'. Mostrando resumen simple.")
+    
+    # Crear tabla pivot con Sí/No basado en si hay volumen
+    pivot_table = df_filtrado.pivot_table(
+        values=columna_volumen,
+        index=["Nivel", "Elementos"],
+        columns="FC_CON_ESTADO" if "FC_CON_ESTADO" in df_filtrado.columns else None,
+        aggfunc="sum",
+        fill_value=0
+    ).reset_index()
+    
+    # Si no hay FC_CON_ESTADO, crear columnas Sí/No basadas en si hay volumen
+    if "FC_CON_ESTADO" not in df_filtrado.columns:
+        # Crear columnas Sí/No basadas en si hay volumen
         pivot_table = df_filtrado.groupby(["Nivel", "Elementos"])[columna_volumen].sum().reset_index()
+        pivot_table["Sí"] = np.where(pivot_table[columna_volumen] > 0, 1, 0)
+        pivot_table["No"] = np.where(pivot_table[columna_volumen] == 0, 1, 0)
         pivot_table = pivot_table.rename(columns={columna_volumen: "Total"})
+    
     # Calcular totales y %
     if "Total" not in pivot_table.columns:
         numeric_columns = pivot_table.select_dtypes(include=[np.number]).columns
@@ -362,14 +369,22 @@ def crear_tabla_interactiva(df, titulo, columna_volumen="VolumenHA", tab_key="")
             pivot_table["Total"] = pivot_table[numeric_columns].sum(axis=1)
         else:
             pivot_table["Total"] = 0
+    
     if "Total" in pivot_table.columns and pivot_table["Total"].sum() > 0:
         pivot_table["% Avance"] = (pivot_table["Total"] / pivot_table["Total"].sum() * 100).round(2)
+    
+    # Formatear columnas numéricas
     for col in pivot_table.select_dtypes(include=[np.number]).columns:
         pivot_table[col] = pivot_table[col].round(2)
+    
     # Ordenar por Nivel y Elemento para jerarquía visual
     pivot_table = pivot_table.sort_values(["Nivel", "Elementos"]).reset_index(drop=True)
+    
     st.subheader(titulo)
+    
+    # Agregar filtros
     col1, col2 = st.columns(2)
+    
     with col1:
         try:
             niveles_raw = df_filtrado["Nivel"].dropna().unique()
@@ -379,6 +394,7 @@ def crear_tabla_interactiva(df, titulo, columna_volumen="VolumenHA", tab_key="")
         except Exception as e:
             st.error(f"Error al cargar niveles: {e}")
             nivel_seleccionado = "Todos"
+    
     with col2:
         try:
             elementos_raw = df_filtrado["Elementos"].dropna().unique()
@@ -388,6 +404,8 @@ def crear_tabla_interactiva(df, titulo, columna_volumen="VolumenHA", tab_key="")
         except Exception as e:
             st.error(f"Error al cargar elementos: {e}")
             elemento_seleccionado = "Todos"
+    
+    # Aplicar filtros
     df_filtrado_tabla = pivot_table.copy()
     try:
         if nivel_seleccionado != "Todos":
@@ -396,6 +414,8 @@ def crear_tabla_interactiva(df, titulo, columna_volumen="VolumenHA", tab_key="")
             df_filtrado_tabla = df_filtrado_tabla[df_filtrado_tabla["Elementos"] == elemento_seleccionado]
     except Exception as e:
         st.error(f"Error al aplicar filtros: {e}")
+    
+    # Mostrar tabla con jerarquías expandibles
     try:
         st.dataframe(
             df_filtrado_tabla,
@@ -411,12 +431,28 @@ def crear_tabla_interactiva(df, titulo, columna_volumen="VolumenHA", tab_key="")
     except Exception as e:
         st.error(f"Error al mostrar tabla: {e}")
         st.dataframe(df_filtrado_tabla, use_container_width=True)
+    
+    # Mostrar métricas
     if not df_filtrado_tabla.empty:
         try:
-            total_sum = df_filtrado_tabla['Total'].sum()
-            st.metric("Total General", f"{total_sum:.2f}")
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                total_sum = df_filtrado_tabla['Total'].sum()
+                st.metric("Total General", f"{total_sum:.2f}")
+            
+            with col2:
+                if "Sí" in df_filtrado_tabla.columns:
+                    si_count = df_filtrado_tabla['Sí'].sum()
+                    st.metric("Elementos Completados", f"{si_count}")
+            
+            with col3:
+                if "No" in df_filtrado_tabla.columns:
+                    no_count = df_filtrado_tabla['No'].sum()
+                    st.metric("Elementos Pendientes", f"{no_count}")
+                    
         except Exception as e:
-            st.error(f"Error al calcular total: {e}")
+            st.error(f"Error al calcular métricas: {e}")
 
 def mostrar_avance_semanal(use_local_files=False):
     """Muestra el avance semanal de hormigones"""
@@ -524,9 +560,19 @@ def mostrar_avance_semanal(use_local_files=False):
                     pivot_semanal[col_actual] - pivot_semanal[col_anterior]
                 )
     
+    # Calcular totales
+    numeric_cols = pivot_semanal.select_dtypes(include=[np.number]).columns
+    if len(numeric_cols) > 0:
+        pivot_semanal["Total"] = pivot_semanal[numeric_cols].sum(axis=1)
+        if pivot_semanal["Total"].sum() > 0:
+            pivot_semanal["% Avance"] = (pivot_semanal["Total"] / pivot_semanal["Total"].sum() * 100).round(2)
+    
     # Formatear columnas numéricas
     for col in pivot_semanal.select_dtypes(include=[np.number]).columns:
         pivot_semanal[col] = pivot_semanal[col].round(2)
+    
+    # Ordenar por Nivel y Elemento para jerarquía visual
+    pivot_semanal = pivot_semanal.sort_values(["Nivel", "Elementos"]).reset_index(drop=True)
     
     # Mostrar tabla
     st.subheader("Avance Semanal Hormigones")
@@ -564,16 +610,63 @@ def mostrar_avance_semanal(use_local_files=False):
     except Exception as e:
         st.error(f"Error al aplicar filtros: {e}")
     
-    # Mostrar tabla con st.dataframe
+    # Mostrar tabla con jerarquías expandibles
     try:
+        # Crear configuración de columnas dinámica
+        column_config = {
+            "Nivel": st.column_config.TextColumn("Nivel", width="medium"),
+            "Elementos": st.column_config.TextColumn("Elementos", width="large"),
+        }
+        
+        # Agregar columnas de fechas
+        for col in df_filtrado_tabla.columns:
+            if col not in ["Nivel", "Elementos", "Total", "% Avance"]:
+                if "Dif_" in col:
+                    column_config[col] = st.column_config.NumberColumn(col, format="%.2f")
+                else:
+                    column_config[col] = st.column_config.NumberColumn(col, format="%.2f")
+        
+        # Agregar columnas de totales
+        if "Total" in df_filtrado_tabla.columns:
+            column_config["Total"] = st.column_config.NumberColumn("Total", format="%.2f")
+        if "% Avance" in df_filtrado_tabla.columns:
+            column_config["% Avance"] = st.column_config.NumberColumn("% Avance", format="%.2f%%")
+        
         st.dataframe(
             df_filtrado_tabla,
             use_container_width=True,
-            hide_index=True
+            hide_index=True,
+            column_config=column_config
         )
     except Exception as e:
         st.error(f"Error al mostrar tabla: {e}")
         st.dataframe(df_filtrado_tabla, use_container_width=True)
+    
+    # Mostrar métricas
+    if not df_filtrado_tabla.empty and "Total" in df_filtrado_tabla.columns:
+        try:
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                total_sum = df_filtrado_tabla['Total'].sum()
+                st.metric("Total General", f"{total_sum:.2f}")
+            
+            with col2:
+                if len(fechas) >= 2:
+                    ultima_fecha = fechas[-1]
+                    if ultima_fecha in df_filtrado_tabla.columns:
+                        ultimo_total = df_filtrado_tabla[ultima_fecha].sum()
+                        st.metric(f"Total {ultima_fecha.strftime('%d/%m/%Y')}", f"{ultimo_total:.2f}")
+            
+            with col3:
+                if len(fechas) >= 2:
+                    primera_fecha = fechas[0]
+                    if primera_fecha in df_filtrado_tabla.columns:
+                        primer_total = df_filtrado_tabla[primera_fecha].sum()
+                        st.metric(f"Total {primera_fecha.strftime('%d/%m/%Y')}", f"{primer_total:.2f}")
+                        
+        except Exception as e:
+            st.error(f"Error al calcular métricas: {e}")
     
     # Mostrar gráfico de tendencia
     if len(fechas) >= 2:
@@ -693,9 +786,19 @@ def mostrar_trisemanal(use_local_files=False):
         if col_actual in pivot_trisemanal.columns and col_anterior in pivot_trisemanal.columns:
             pivot_trisemanal["Diferencia"] = pivot_trisemanal[col_actual] - pivot_trisemanal[col_anterior]
     
+    # Calcular totales
+    numeric_cols = pivot_trisemanal.select_dtypes(include=[np.number]).columns
+    if len(numeric_cols) > 0:
+        pivot_trisemanal["Total"] = pivot_trisemanal[numeric_cols].sum(axis=1)
+        if pivot_trisemanal["Total"].sum() > 0:
+            pivot_trisemanal["% Avance"] = (pivot_trisemanal["Total"] / pivot_trisemanal["Total"].sum() * 100).round(2)
+    
     # Formatear columnas numéricas
     for col in pivot_trisemanal.select_dtypes(include=[np.number]).columns:
         pivot_trisemanal[col] = pivot_trisemanal[col].round(2)
+    
+    # Ordenar por Nivel y Elemento para jerarquía visual
+    pivot_trisemanal = pivot_trisemanal.sort_values(["Nivel", "Elementos"]).reset_index(drop=True)
     
     # Mostrar tabla
     st.subheader("Comparación Trisemanal")
@@ -733,12 +836,32 @@ def mostrar_trisemanal(use_local_files=False):
     except Exception as e:
         st.error(f"Error al aplicar filtros: {e}")
     
-    # Mostrar tabla con st.dataframe
+    # Mostrar tabla con jerarquías expandibles
     try:
+        # Crear configuración de columnas dinámica
+        column_config = {
+            "Nivel": st.column_config.TextColumn("Nivel", width="medium"),
+            "Elementos": st.column_config.TextColumn("Elementos", width="large"),
+        }
+        
+        # Agregar columnas de fechas
+        for col in df_filtrado_tabla.columns:
+            if col not in ["Nivel", "Elementos", "Total", "% Avance", "Diferencia"]:
+                column_config[col] = st.column_config.NumberColumn(col, format="%.2f")
+        
+        # Agregar columnas especiales
+        if "Diferencia" in df_filtrado_tabla.columns:
+            column_config["Diferencia"] = st.column_config.NumberColumn("Diferencia", format="%.2f")
+        if "Total" in df_filtrado_tabla.columns:
+            column_config["Total"] = st.column_config.NumberColumn("Total", format="%.2f")
+        if "% Avance" in df_filtrado_tabla.columns:
+            column_config["% Avance"] = st.column_config.NumberColumn("% Avance", format="%.2f%%")
+        
         st.dataframe(
             df_filtrado_tabla,
             use_container_width=True,
-            hide_index=True
+            hide_index=True,
+            column_config=column_config
         )
     except Exception as e:
         st.error(f"Error al mostrar tabla: {e}")
@@ -759,6 +882,32 @@ def mostrar_trisemanal(use_local_files=False):
         with col3:
             negativas = df_filtrado_tabla[df_filtrado_tabla['Diferencia'] < 0]['Diferencia'].sum()
             st.metric("Diferencias Negativas", f"{negativas:.2f}")
+    
+    # Mostrar métricas adicionales
+    if not df_filtrado_tabla.empty and "Total" in df_filtrado_tabla.columns:
+        try:
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                total_sum = df_filtrado_tabla['Total'].sum()
+                st.metric("Total General", f"{total_sum:.2f}")
+            
+            with col2:
+                if len(fechas) >= 2:
+                    ultima_fecha = fechas[-1]
+                    if ultima_fecha in df_filtrado_tabla.columns:
+                        ultimo_total = df_filtrado_tabla[ultima_fecha].sum()
+                        st.metric(f"Total {ultima_fecha.strftime('%d/%m/%Y')}", f"{ultimo_total:.2f}")
+            
+            with col3:
+                if len(fechas) >= 2:
+                    primera_fecha = fechas[0]
+                    if primera_fecha in df_filtrado_tabla.columns:
+                        primer_total = df_filtrado_tabla[primera_fecha].sum()
+                        st.metric(f"Total {primera_fecha.strftime('%d/%m/%Y')}", f"{primer_total:.2f}")
+                        
+        except Exception as e:
+            st.error(f"Error al calcular métricas: {e}")
 
 @st.cache_data(ttl=3600)  # Cache por 1 hora
 def cargar_datos_local():
