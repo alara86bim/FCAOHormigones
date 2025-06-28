@@ -341,41 +341,65 @@ def crear_tabla_interactiva(df, titulo, columna_volumen="VolumenHA", tab_key="")
     
     # Filtrar filas válidas
     df_filtrado = df[df["Nivel"].notna() & (df["Nivel"].astype(str).str.strip() != "")]
+    df_filtrado = df_filtrado[df_filtrado["Elementos"].notna() & (df_filtrado["Elementos"].astype(str).str.strip() != "")]
+    
     if df_filtrado.empty:
-        st.warning("No hay datos con niveles válidos")
+        st.warning("No hay datos con niveles y elementos válidos")
         return
     
     # Crear tabla pivot con Sí/No basado en si hay volumen
-    pivot_table = df_filtrado.pivot_table(
-        values=columna_volumen,
-        index=["Nivel", "Elementos"],
-        columns="FC_CON_ESTADO" if "FC_CON_ESTADO" in df_filtrado.columns else None,
-        aggfunc="sum",
-        fill_value=0
-    ).reset_index()
-    
-    # Si no hay FC_CON_ESTADO, crear columnas Sí/No basadas en si hay volumen
-    if "FC_CON_ESTADO" not in df_filtrado.columns:
-        # Crear columnas Sí/No basadas en si hay volumen
+    if "FC_CON_ESTADO" in df_filtrado.columns:
+        # Si existe FC_CON_ESTADO, usarlo para crear las columnas Sí/No
+        pivot_table = df_filtrado.pivot_table(
+            values=columna_volumen,
+            index=["Nivel", "Elementos"],
+            columns="FC_CON_ESTADO",
+            aggfunc="sum",
+            fill_value=0
+        ).reset_index()
+        
+        # Asegurar que existan las columnas Sí y No
+        if "Sí" not in pivot_table.columns:
+            pivot_table["Sí"] = 0
+        if "No" not in pivot_table.columns:
+            pivot_table["No"] = 0
+            
+    else:
+        # Si no hay FC_CON_ESTADO, crear columnas Sí/No basadas en si hay volumen
         pivot_table = df_filtrado.groupby(["Nivel", "Elementos"])[columna_volumen].sum().reset_index()
         pivot_table["Sí"] = np.where(pivot_table[columna_volumen] > 0, 1, 0)
         pivot_table["No"] = np.where(pivot_table[columna_volumen] == 0, 1, 0)
         pivot_table = pivot_table.rename(columns={columna_volumen: "Total"})
     
-    # Calcular totales y %
+    # Calcular totales
     if "Total" not in pivot_table.columns:
         numeric_columns = pivot_table.select_dtypes(include=[np.number]).columns
+        numeric_columns = [col for col in numeric_columns if col not in ["Sí", "No"]]
         if len(numeric_columns) > 0:
             pivot_table["Total"] = pivot_table[numeric_columns].sum(axis=1)
         else:
             pivot_table["Total"] = 0
     
+    # Calcular porcentajes
+    total_si = pivot_table["Sí"].sum()
+    total_no = pivot_table["No"].sum()
+    total_elements = total_si + total_no
+    
+    if total_elements > 0:
+        pivot_table["Sí%"] = (pivot_table["Sí"] / total_elements * 100).round(2)
+        pivot_table["No%"] = (pivot_table["No"] / total_elements * 100).round(2)
+    else:
+        pivot_table["Sí%"] = 0
+        pivot_table["No%"] = 0
+    
+    # Calcular % Avance del total
     if "Total" in pivot_table.columns and pivot_table["Total"].sum() > 0:
         pivot_table["% Avance"] = (pivot_table["Total"] / pivot_table["Total"].sum() * 100).round(2)
     
     # Formatear columnas numéricas
     for col in pivot_table.select_dtypes(include=[np.number]).columns:
-        pivot_table[col] = pivot_table[col].round(2)
+        if col not in ["Sí", "No"]:  # No redondear las columnas Sí/No que son enteros
+            pivot_table[col] = pivot_table[col].round(2)
     
     # Ordenar por Nivel y Elemento para jerarquía visual
     pivot_table = pivot_table.sort_values(["Nivel", "Elementos"]).reset_index(drop=True)
@@ -417,16 +441,27 @@ def crear_tabla_interactiva(df, titulo, columna_volumen="VolumenHA", tab_key="")
     
     # Mostrar tabla con jerarquías expandibles
     try:
+        # Crear configuración de columnas
+        column_config = {
+            "Nivel": st.column_config.TextColumn("Nivel", width="medium"),
+            "Elementos": st.column_config.TextColumn("Elementos", width="large"),
+            "Sí": st.column_config.NumberColumn("Sí", format="%d"),
+            "Sí%": st.column_config.NumberColumn("Sí%", format="%.2f%%"),
+            "No": st.column_config.NumberColumn("No", format="%d"),
+            "No%": st.column_config.NumberColumn("No%", format="%.2f%%"),
+        }
+        
+        # Agregar columnas adicionales si existen
+        if "Total" in df_filtrado_tabla.columns:
+            column_config["Total"] = st.column_config.NumberColumn("Total", format="%.2f")
+        if "% Avance" in df_filtrado_tabla.columns:
+            column_config["% Avance"] = st.column_config.NumberColumn("% Avance", format="%.2f%%")
+        
         st.dataframe(
             df_filtrado_tabla,
             use_container_width=True,
             hide_index=True,
-            column_config={
-                "Nivel": st.column_config.TextColumn("Nivel", width="medium"),
-                "Elementos": st.column_config.TextColumn("Elementos", width="large"),
-                "Total": st.column_config.NumberColumn("Total", format="%.2f"),
-                "% Avance": st.column_config.NumberColumn("% Avance", format="%.2f%%")
-            }
+            column_config=column_config
         )
     except Exception as e:
         st.error(f"Error al mostrar tabla: {e}")
@@ -435,21 +470,35 @@ def crear_tabla_interactiva(df, titulo, columna_volumen="VolumenHA", tab_key="")
     # Mostrar métricas
     if not df_filtrado_tabla.empty:
         try:
-            col1, col2, col3 = st.columns(3)
+            col1, col2, col3, col4 = st.columns(4)
             
             with col1:
-                total_sum = df_filtrado_tabla['Total'].sum()
-                st.metric("Total General", f"{total_sum:.2f}")
+                if "Total" in df_filtrado_tabla.columns:
+                    total_sum = df_filtrado_tabla['Total'].sum()
+                    st.metric("Total General", f"{total_sum:.2f}")
+                else:
+                    total_elements = df_filtrado_tabla['Sí'].sum() + df_filtrado_tabla['No'].sum()
+                    st.metric("Total Elementos", f"{total_elements}")
             
             with col2:
-                if "Sí" in df_filtrado_tabla.columns:
-                    si_count = df_filtrado_tabla['Sí'].sum()
-                    st.metric("Elementos Completados", f"{si_count}")
+                si_count = df_filtrado_tabla['Sí'].sum()
+                si_percent = df_filtrado_tabla['Sí%'].mean() if 'Sí%' in df_filtrado_tabla.columns else 0
+                st.metric("Elementos Completados", f"{si_count} ({si_percent:.1f}%)")
             
             with col3:
-                if "No" in df_filtrado_tabla.columns:
-                    no_count = df_filtrado_tabla['No'].sum()
-                    st.metric("Elementos Pendientes", f"{no_count}")
+                no_count = df_filtrado_tabla['No'].sum()
+                no_percent = df_filtrado_tabla['No%'].mean() if 'No%' in df_filtrado_tabla.columns else 0
+                st.metric("Elementos Pendientes", f"{no_count} ({no_percent:.1f}%)")
+            
+            with col4:
+                if "Total" in df_filtrado_tabla.columns and df_filtrado_tabla['Total'].sum() > 0:
+                    total_avance = df_filtrado_tabla['% Avance'].sum() if '% Avance' in df_filtrado_tabla.columns else 0
+                    st.metric("% Avance Total", f"{total_avance:.1f}%")
+                else:
+                    total_elements = df_filtrado_tabla['Sí'].sum() + df_filtrado_tabla['No'].sum()
+                    if total_elements > 0:
+                        avance_percent = (df_filtrado_tabla['Sí'].sum() / total_elements * 100)
+                        st.metric("% Avance", f"{avance_percent:.1f}%")
                     
         except Exception as e:
             st.error(f"Error al calcular métricas: {e}")
