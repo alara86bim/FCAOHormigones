@@ -436,10 +436,13 @@ def mostrar_avance_semanal(use_local_files=False):
         archivos_fechas, service = cargar_archivos_semanales()
     
     if not archivos_fechas:
+        st.info("No se encontraron archivos semanales para mostrar. Verifica que existan archivos en la carpeta 'REPORTE SEMANAL' o en Google Drive.")
         return
     
     # Procesar archivos
     lista_df = []
+    archivos_procesados = 0
+    
     for f, fecha in archivos_fechas:
         try:
             if use_local_files:
@@ -451,12 +454,14 @@ def mostrar_avance_semanal(use_local_files=False):
                 fh = download_file(service, f['id'])
             
             if not fh:
-                nombre_archivo = f if use_local_files else f['name']
                 continue
                 
             # Leer el archivo con el formato correcto
             dfw = pd.read_csv(fh, sep='\t', header=1, dtype=str, quoting=3)  # QUOTE_NONE
             dfw = dfw.dropna(how="all")
+            
+            if dfw.empty:
+                continue
             
             # Limpiar columnas (remover comillas)
             dfw = dfw.rename(columns=lambda x: x.strip().replace('"', '') if isinstance(x, str) else x)
@@ -468,7 +473,6 @@ def mostrar_avance_semanal(use_local_files=False):
             
             # Verificar que exista la columna VolumenHA
             if "VolumenHA" not in dfw.columns:
-                nombre_archivo = f if use_local_files else f['name']
                 continue
             
             # Convertir VolumenHA a numérico
@@ -481,7 +485,6 @@ def mostrar_avance_semanal(use_local_files=False):
             if "Hormigonado" in dfw.columns:
                 dfw = dfw[dfw["Hormigonado"] == "Sí"]
             else:
-                nombre_archivo = f if use_local_files else f['name']
                 continue
             
             # Solo filas con Nivel y Elementos válidos
@@ -489,32 +492,50 @@ def mostrar_avance_semanal(use_local_files=False):
                 dfw = dfw[dfw["Nivel"].notna() & (dfw["Nivel"].astype(str).str.strip() != "")]
                 dfw = dfw[dfw["Elementos"].notna() & (dfw["Elementos"].astype(str).str.strip() != "")]
             else:
-                nombre_archivo = f if use_local_files else f['name']
+                continue
+            
+            # Solo filas con VolumenHA válido
+            dfw = dfw[dfw["VolumenHA"].notna() & (dfw["VolumenHA"] > 0)]
+            
+            if dfw.empty:
                 continue
             
             # Agrupar por Nivel y Elementos
             resumen = dfw.groupby(["Nivel", "Elementos"])["VolumenHA"].sum().reset_index()
             resumen["Fecha"] = fecha
             lista_df.append(resumen)
+            archivos_procesados += 1
             
         except Exception as e:
-            nombre_archivo = f if use_local_files else f['name']
             continue
     
     if not lista_df:
+        st.info("No se pudieron procesar archivos semanales. Verifica el formato de los archivos.")
+        return
+    
+    if archivos_procesados == 0:
+        st.info("No se encontraron datos válidos en los archivos semanales.")
         return
     
     # Unir todos los resultados
     df_semana = pd.concat(lista_df, ignore_index=True)
     
+    if df_semana.empty:
+        st.info("No hay datos de hormigones para mostrar.")
+        return
+    
     # Crear tabla pivot para comparación
-    pivot_semanal = df_semana.pivot_table(
-        values="VolumenHA",
-        index=["Nivel", "Elementos"],
-        columns="Fecha",
-        aggfunc="sum",
-        fill_value=0
-    ).reset_index()
+    try:
+        pivot_semanal = df_semana.pivot_table(
+            values="VolumenHA",
+            index=["Nivel", "Elementos"],
+            columns="Fecha",
+            aggfunc="sum",
+            fill_value=0
+        ).reset_index()
+    except Exception as e:
+        st.info("Error al crear la tabla de comparación semanal.")
+        return
     
     # Calcular diferencias entre semanas
     fechas = sorted(df_semana["Fecha"].unique())
@@ -543,6 +564,9 @@ def mostrar_avance_semanal(use_local_files=False):
     
     # Mostrar tabla
     st.subheader("Avance Semanal Hormigones")
+    
+    # Mostrar información de archivos procesados
+    st.caption(f"Archivos procesados: {archivos_procesados} de {len(archivos_fechas)}")
     
     # Agregar filtros
     col1, col2 = st.columns(2)
@@ -635,10 +659,13 @@ def mostrar_avance_semanal(use_local_files=False):
     # Mostrar gráfico de tendencia
     if len(fechas) >= 2:
         st.subheader("Tendencia Semanal")
-        df_tendencia = df_semana.groupby("Fecha")["VolumenHA"].sum().reset_index()
-        fig = px.line(df_tendencia, x="Fecha", y="VolumenHA", 
-                     title="Evolución del Volumen de Hormigón por Semana")
-        st.plotly_chart(fig, use_container_width=True)
+        try:
+            df_tendencia = df_semana.groupby("Fecha")["VolumenHA"].sum().reset_index()
+            fig = px.line(df_tendencia, x="Fecha", y="VolumenHA", 
+                         title="Evolución del Volumen de Hormigón por Semana")
+            st.plotly_chart(fig, use_container_width=True)
+        except Exception as e:
+            st.info("No se pudo generar el gráfico de tendencia.")
 
 def mostrar_trisemanal(use_local_files=False):
     """Muestra comparación trisemanal"""
@@ -648,6 +675,7 @@ def mostrar_trisemanal(use_local_files=False):
         archivos_fechas, service = cargar_archivos_semanales()
     
     if len(archivos_fechas) < 2:
+        st.info("Se necesitan al menos 2 archivos semanales para la comparación trisemanal.")
         return
     
     # Tomar solo los 2 últimos archivos
@@ -655,6 +683,8 @@ def mostrar_trisemanal(use_local_files=False):
     
     # Procesar archivos
     lista_df = []
+    archivos_procesados = 0
+    
     for f, fecha in archivos_fechas:
         try:
             if use_local_files:
@@ -666,12 +696,14 @@ def mostrar_trisemanal(use_local_files=False):
                 fh = download_file(service, f['id'])
             
             if not fh:
-                nombre_archivo = f if use_local_files else f['name']
                 continue
                 
             # Leer el archivo con el formato correcto
             dfw = pd.read_csv(fh, sep='\t', header=1, dtype=str, quoting=3)  # QUOTE_NONE
             dfw = dfw.dropna(how="all")
+            
+            if dfw.empty:
+                continue
             
             # Limpiar columnas (remover comillas)
             dfw = dfw.rename(columns=lambda x: x.strip().replace('"', '') if isinstance(x, str) else x)
@@ -683,7 +715,6 @@ def mostrar_trisemanal(use_local_files=False):
             
             # Verificar que exista la columna VolumenHA
             if "VolumenHA" not in dfw.columns:
-                nombre_archivo = f if use_local_files else f['name']
                 continue
             
             # Convertir VolumenHA a numérico
@@ -696,7 +727,6 @@ def mostrar_trisemanal(use_local_files=False):
             if "Hormigonado" in dfw.columns:
                 dfw = dfw[dfw["Hormigonado"] == "Sí"]
             else:
-                nombre_archivo = f if use_local_files else f['name']
                 continue
             
             # Solo filas con Nivel y Elementos válidos
@@ -704,36 +734,54 @@ def mostrar_trisemanal(use_local_files=False):
                 dfw = dfw[dfw["Nivel"].notna() & (dfw["Nivel"].astype(str).str.strip() != "")]
                 dfw = dfw[dfw["Elementos"].notna() & (dfw["Elementos"].astype(str).str.strip() != "")]
             else:
-                nombre_archivo = f if use_local_files else f['name']
                 continue
+            
+            # Solo filas con VolumenHA válido
+            dfw = dfw[dfw["VolumenHA"].notna() & (dfw["VolumenHA"] > 0)]
             
             # Filtrar por FC_CON_TRISEMANAL = 'Semana 01' por defecto
             if "FC_CON_TRISEMANAL" in dfw.columns:
                 dfw = dfw[dfw["FC_CON_TRISEMANAL"] == "Semana 01"]
             
+            if dfw.empty:
+                continue
+            
             # Agrupar por Nivel y Elementos
             resumen = dfw.groupby(["Nivel", "Elementos"])["VolumenHA"].sum().reset_index()
             resumen["Fecha"] = fecha
             lista_df.append(resumen)
+            archivos_procesados += 1
             
         except Exception as e:
-            nombre_archivo = f if use_local_files else f['name']
             continue
     
     if not lista_df:
+        st.info("No se pudieron procesar archivos para la comparación trisemanal.")
+        return
+    
+    if archivos_procesados < 2:
+        st.info("Se necesitan al menos 2 archivos válidos para la comparación trisemanal.")
         return
     
     # Unir todos los resultados
     df_semana = pd.concat(lista_df, ignore_index=True)
     
+    if df_semana.empty:
+        st.info("No hay datos para la comparación trisemanal.")
+        return
+    
     # Crear tabla pivot para comparación
-    pivot_trisemanal = df_semana.pivot_table(
-        values="VolumenHA",
-        index=["Nivel", "Elementos"],
-        columns="Fecha",
-        aggfunc="sum",
-        fill_value=0
-    ).reset_index()
+    try:
+        pivot_trisemanal = df_semana.pivot_table(
+            values="VolumenHA",
+            index=["Nivel", "Elementos"],
+            columns="Fecha",
+            aggfunc="sum",
+            fill_value=0
+        ).reset_index()
+    except Exception as e:
+        st.info("Error al crear la tabla de comparación trisemanal.")
+        return
     
     # Calcular diferencia entre las dos semanas
     fechas = sorted(df_semana["Fecha"].unique())
@@ -759,6 +807,9 @@ def mostrar_trisemanal(use_local_files=False):
     
     # Mostrar tabla
     st.subheader("Comparación Trisemanal")
+    
+    # Mostrar información de archivos procesados
+    st.caption(f"Archivos procesados: {archivos_procesados} de {len(archivos_fechas)}")
     
     # Agregar filtros
     col1, col2 = st.columns(2)
@@ -904,16 +955,32 @@ def cargar_archivos_semanales_local():
         for filename in os.listdir(carpeta):
             if filename.endswith('.txt') and 'AO_GENERAL' in filename:
                 # Extraer fecha del nombre del archivo
-                fecha_str = filename.split('_')[0]  # Tomar la primera parte antes del primer _
-                
-                # Intentar diferentes formatos de fecha
+                # Buscar el patrón de fecha al inicio del archivo
                 fecha = None
-                for formato in ['%d-%m-%Y', '%d-%m-%y', '%Y-%m-%d']:
-                    try:
-                        fecha = datetime.strptime(fecha_str, formato)
-                        break
-                    except ValueError:
-                        continue
+                
+                # Intentar diferentes patrones de fecha
+                patterns = [
+                    r"^(\d{2}-\d{2}-\d{4})_AO_GENERAL\.txt$",  # DD-MM-YYYY
+                    r"^(\d{2}-\d{2}-\d{2})_AO_GENERAL\.txt$",  # DD-MM-YY
+                    r"^(\d{4}-\d{2}-\d{2})_AO_GENERAL\.txt$",  # YYYY-MM-DD
+                ]
+                
+                for pattern in patterns:
+                    match = re.match(pattern, filename)
+                    if match:
+                        fecha_str = match.group(1)
+                        try:
+                            # Intentar diferentes formatos de fecha
+                            if len(fecha_str.split('-')[2]) == 4:  # YYYY
+                                if len(fecha_str.split('-')[0]) == 2:  # DD-MM-YYYY
+                                    fecha = pd.to_datetime(fecha_str, format='%d-%m-%Y', dayfirst=True)
+                                else:  # YYYY-MM-DD
+                                    fecha = pd.to_datetime(fecha_str, format='%Y-%m-%d')
+                            else:  # DD-MM-YY
+                                fecha = pd.to_datetime(fecha_str, format='%d-%m-%y', dayfirst=True)
+                            break
+                        except:
+                            continue
                 
                 if fecha:
                     archivos.append((filename, fecha))
@@ -945,6 +1012,10 @@ def main():
     st.sidebar.header("Menú Principal")
     if 'menu_seleccionado' not in st.session_state:
         st.session_state['menu_seleccionado'] = 'HORMIGONES'
+    if 'submenu_hormigones' not in st.session_state:
+        st.session_state['submenu_hormigones'] = 'AVANCE GENERAL OG'
+    if 'submenu_arquitectura' not in st.session_state:
+        st.session_state['submenu_arquitectura'] = 'TABIQUES'
 
     with st.sidebar:
         exp_hormigones = st.expander("HORMIGONES", expanded=st.session_state['menu_seleccionado'] == 'HORMIGONES')
@@ -952,18 +1023,24 @@ def main():
         with exp_hormigones:
             if st.button("Ir a Hormigones", key="btn_hormigones"):
                 st.session_state['menu_seleccionado'] = 'HORMIGONES'
-            submenu = st.radio(
-                "Hormigones",
-                ["AVANCE GENERAL OG", "AVANCE SEMANAL OG", "TRISEMANAL OG"],
-                key="submenu_hormigones"
-            )
         with exp_arquitectura:
             if st.button("Ir a Arquitectura", key="btn_arquitectura"):
                 st.session_state['menu_seleccionado'] = 'ARQUITECTURA'
-            submenu_arq = st.radio(
+
+        # Mostrar solo el submenú correspondiente
+        if st.session_state['menu_seleccionado'] == 'HORMIGONES':
+            st.session_state['submenu_hormigones'] = st.radio(
+                "Hormigones",
+                ["AVANCE GENERAL OG", "AVANCE SEMANAL OG", "TRISEMANAL OG"],
+                key="submenu_hormigones_radio",
+                index=["AVANCE GENERAL OG", "AVANCE SEMANAL OG", "TRISEMANAL OG"].index(st.session_state['submenu_hormigones']) if 'submenu_hormigones' in st.session_state else 0
+            )
+        elif st.session_state['menu_seleccionado'] == 'ARQUITECTURA':
+            st.session_state['submenu_arquitectura'] = st.radio(
                 "Arquitectura",
                 ["TABIQUES", "PAVIMENTOS", "CIELOS", "REVESTIMIENTOS"],
-                key="submenu_arquitectura"
+                key="submenu_arquitectura_radio",
+                index=["TABIQUES", "PAVIMENTOS", "CIELOS", "REVESTIMIENTOS"].index(st.session_state['submenu_arquitectura']) if 'submenu_arquitectura' in st.session_state else 0
             )
 
     # Mostrar contenido según la navegación
@@ -979,6 +1056,7 @@ def main():
             df = cargar_datos()
         if df is None:
             return
+        submenu = st.session_state['submenu_hormigones']
         if submenu == "AVANCE GENERAL OG":
             st.header("Hormigones")
             crear_tabla_interactiva(df, "Avance de Hormigones", "VolumenHA", tab_key="hormigones_general")
@@ -991,6 +1069,7 @@ def main():
         elif submenu == "TRISEMANAL OG":
             mostrar_trisemanal(use_local_files)
     elif st.session_state['menu_seleccionado'] == "ARQUITECTURA":
+        submenu_arq = st.session_state['submenu_arquitectura']
         st.title(f"Arquitectura - {submenu_arq}")
         # Placeholder vacío para futuras vistas
 
