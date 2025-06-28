@@ -326,7 +326,7 @@ def cargar_archivos_semanales():
     return [], None
 
 def crear_tabla_interactiva(df, titulo, columna_volumen="VolumenHA", tab_key=""):
-    """Crea una tabla interactiva con st.dataframe, jerarquía visual por Nivel y Elemento"""
+    """Crea una tabla interactiva con jerarquías expandibles por Nivel y Elemento"""
     if df.empty:
         st.warning("No hay datos para mostrar")
         return
@@ -439,36 +439,75 @@ def crear_tabla_interactiva(df, titulo, columna_volumen="VolumenHA", tab_key="")
     except Exception as e:
         st.error(f"Error al aplicar filtros: {e}")
     
-    # Mostrar tabla con jerarquías expandibles
+    # Crear jerarquía expandible con st.tree
     try:
-        # Crear configuración de columnas
-        column_config = {
-            "Nivel": st.column_config.TextColumn("Nivel", width="medium"),
-            "Elementos": st.column_config.TextColumn("Elementos", width="large"),
-            "Sí": st.column_config.NumberColumn("Sí", format="%d"),
-            "Sí%": st.column_config.NumberColumn("Sí%", format="%.2f%%"),
-            "No": st.column_config.NumberColumn("No", format="%d"),
-            "No%": st.column_config.NumberColumn("No%", format="%.2f%%"),
-        }
+        # Agrupar por Nivel
+        niveles_unicos = df_filtrado_tabla["Nivel"].unique()
         
-        # Agregar columnas adicionales si existen
-        if "Total" in df_filtrado_tabla.columns:
-            column_config["Total"] = st.column_config.NumberColumn("Total", format="%.2f")
-        if "% Avance" in df_filtrado_tabla.columns:
-            column_config["% Avance"] = st.column_config.NumberColumn("% Avance", format="%.2f%%")
-        
-        st.dataframe(
-            df_filtrado_tabla,
-            use_container_width=True,
-            hide_index=True,
-            column_config=column_config
-        )
+        # Crear el árbol jerárquico
+        for nivel in sorted(niveles_unicos):
+            # Obtener datos del nivel
+            datos_nivel = df_filtrado_tabla[df_filtrado_tabla["Nivel"] == nivel]
+            
+            # Crear nodo del nivel
+            with st.expander(f"🏗️ {nivel} ({len(datos_nivel)} elementos)", expanded=True):
+                # Mostrar tabla del nivel
+                st.dataframe(
+                    datos_nivel,
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "Nivel": st.column_config.TextColumn("Nivel", width="medium"),
+                        "Elementos": st.column_config.TextColumn("Elementos", width="large"),
+                        "Sí": st.column_config.NumberColumn("Sí", format="%d"),
+                        "Sí%": st.column_config.NumberColumn("Sí%", format="%.2f%%"),
+                        "No": st.column_config.NumberColumn("No", format="%d"),
+                        "No%": st.column_config.NumberColumn("No%", format="%.2f%%"),
+                        "Total": st.column_config.NumberColumn("Total", format="%.2f") if "Total" in datos_nivel.columns else None,
+                        "% Avance": st.column_config.NumberColumn("% Avance", format="%.2f%%") if "% Avance" in datos_nivel.columns else None
+                    }
+                )
+                
+                # Mostrar métricas del nivel
+                if not datos_nivel.empty:
+                    col1, col2, col3, col4 = st.columns(4)
+                    
+                    with col1:
+                        if "Total" in datos_nivel.columns:
+                            total_nivel = datos_nivel['Total'].sum()
+                            st.metric("Total Nivel", f"{total_nivel:.2f}")
+                        else:
+                            total_elem_nivel = datos_nivel['Sí'].sum() + datos_nivel['No'].sum()
+                            st.metric("Total Elementos", f"{total_elem_nivel}")
+                    
+                    with col2:
+                        si_nivel = datos_nivel['Sí'].sum()
+                        si_percent_nivel = datos_nivel['Sí%'].mean() if 'Sí%' in datos_nivel.columns else 0
+                        st.metric("Completados", f"{si_nivel} ({si_percent_nivel:.1f}%)")
+                    
+                    with col3:
+                        no_nivel = datos_nivel['No'].sum()
+                        no_percent_nivel = datos_nivel['No%'].mean() if 'No%' in datos_nivel.columns else 0
+                        st.metric("Pendientes", f"{no_nivel} ({no_percent_nivel:.1f}%)")
+                    
+                    with col4:
+                        if "Total" in datos_nivel.columns and datos_nivel['Total'].sum() > 0:
+                            avance_nivel = datos_nivel['% Avance'].sum() if '% Avance' in datos_nivel.columns else 0
+                            st.metric("% Avance Nivel", f"{avance_nivel:.1f}%")
+                        else:
+                            total_elem_nivel = datos_nivel['Sí'].sum() + datos_nivel['No'].sum()
+                            if total_elem_nivel > 0:
+                                avance_percent_nivel = (datos_nivel['Sí'].sum() / total_elem_nivel * 100)
+                                st.metric("% Avance", f"{avance_percent_nivel:.1f}%")
+    
     except Exception as e:
-        st.error(f"Error al mostrar tabla: {e}")
+        st.error(f"Error al mostrar jerarquía: {e}")
+        # Fallback a tabla simple
         st.dataframe(df_filtrado_tabla, use_container_width=True)
     
-    # Mostrar métricas
+    # Mostrar métricas generales
     if not df_filtrado_tabla.empty:
+        st.subheader("📊 Resumen General")
         try:
             col1, col2, col3, col4 = st.columns(4)
             
@@ -499,7 +538,7 @@ def crear_tabla_interactiva(df, titulo, columna_volumen="VolumenHA", tab_key="")
                     if total_elements > 0:
                         avance_percent = (df_filtrado_tabla['Sí'].sum() / total_elements * 100)
                         st.metric("% Avance", f"{avance_percent:.1f}%")
-                    
+                        
         except Exception as e:
             st.error(f"Error al calcular métricas: {e}")
 
