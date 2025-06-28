@@ -858,13 +858,14 @@ def mostrar_trisemanal(use_local_files=False):
         # Agregar columnas especiales
         if "Diferencia" in df_filtrado_tabla.columns:
             column_config["Diferencia"] = st.column_config.NumberColumn("Diferencia", format="%.2f")
-        if "Total" in df_filtrado_tabla.columns:
-            column_config["Total"] = st.column_config.NumberColumn("Total", format="%.2f")
-        if "% Avance" in df_filtrado_tabla.columns:
-            column_config["% Avance"] = st.column_config.NumberColumn("% Avance", format="%.2f%%")
+        # No agregar Total ni % Avance a column_config ni mostrarlas
+        
+        # Ocultar columnas 'Total' y '% Avance' en la visualización
+        cols_to_hide = ["Total", "% Avance"]
+        df_to_show = df_filtrado_tabla.drop(columns=[col for col in cols_to_hide if col in df_filtrado_tabla.columns])
         
         st.dataframe(
-            df_filtrado_tabla,
+            df_to_show,
             use_container_width=True,
             hide_index=True,
             column_config=column_config
