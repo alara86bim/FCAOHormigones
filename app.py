@@ -326,7 +326,7 @@ def cargar_archivos_semanales():
     return [], None
 
 def crear_tabla_interactiva(df, titulo, columna_volumen="VolumenHA", tab_key=""):
-    """Crea una tabla interactiva con st.agrid agrupada por Nivel y Elementos, usando el parámetro booleano correspondiente."""
+    """Crea una tabla interactiva con AgGrid, jerarquía expandible por Nivel y Elementos como matriz."""
     from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, DataReturnMode
 
     if df.empty:
@@ -391,11 +391,13 @@ def crear_tabla_interactiva(df, titulo, columna_volumen="VolumenHA", tab_key="")
     if elemento_seleccionado != "Todos":
         df_filtrado_tabla = df_filtrado_tabla[df_filtrado_tabla["Elementos"] == elemento_seleccionado]
 
-    # Configurar AgGrid
+    # Configurar AgGrid para jerarquía expandible
     gb = GridOptionsBuilder.from_dataframe(df_filtrado_tabla)
     gb.configure_default_column(resizable=True, filterable=True, sortable=True, editable=False)
-    gb.configure_column("Nivel", width=150)
-    gb.configure_column("Elementos", width=200)
+    # Agrupación jerárquica real
+    gb.configure_column("Nivel", rowGroup=True, rowGroupIndex=0, hide=True)
+    gb.configure_column("Elementos", rowGroup=True, rowGroupIndex=1, hide=True)
+    # Solo mostrar columnas de datos
     gb.configure_column("Si", type=["numericColumn", "numberColumnFilter"], width=80, valueFormatter="value.toFixed(0)")
     gb.configure_column("Si%", type=["numericColumn", "numberColumnFilter"], width=100, valueFormatter="value.toFixed(2) + '%'", cellStyle={"color": "green"})
     gb.configure_column("No", type=["numericColumn", "numberColumnFilter"], width=80, valueFormatter="value.toFixed(0)")
@@ -406,7 +408,7 @@ def crear_tabla_interactiva(df, titulo, columna_volumen="VolumenHA", tab_key="")
         enableRangeSelection=True,
         enableCharts=True,
         groupDisplayType='groupRows',
-        groupDefaultExpanded=-1
+        groupDefaultExpanded=0  # Colapsado por defecto
     )
     grid_options = gb.build()
 
