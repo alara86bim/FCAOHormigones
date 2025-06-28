@@ -15,6 +15,7 @@ from urllib3.util.retry import Retry
 from requests.adapters import HTTPAdapter
 import requests
 import os
+from datetime import datetime
 
 # Configuración de la página
 st.set_page_config(
@@ -121,76 +122,21 @@ def get_drive_service():
         st.error("Verifica que las credenciales estén en formato JSON válido")
         return None
 
-def download_file(service, file_id, max_retries=3):
-    """Descarga un archivo de Google Drive con reintentos y mejor manejo de errores"""
-    # Si no hay servicio, asumir que es un archivo local
-    if service is None:
-        try:
-            if os.path.exists(file_id):
-                with open(file_id, 'rb') as f:
-                    fh = io.BytesIO(f.read())
-                fh.seek(0)
-                return fh
-            else:
-                st.error(f"❌ Archivo local no encontrado: {file_id}")
-                return None
-        except Exception as e:
-            st.error(f"❌ Error al leer archivo local: {e}")
-            return None
-    
-    # Descarga desde Google Drive
-    for attempt in range(max_retries):
-        try:
-            # Configurar timeout más largo para evitar timeouts
-            request = service.files().get_media(fileId=file_id)
-            fh = io.BytesIO()
-            downloader = MediaIoBaseDownload(fh, request, chunksize=1024*1024)  # 1MB chunks
-            
-            done = False
-            while done is False:
-                try:
-                    status, done = downloader.next_chunk()
-                    if status:
-                        # Mostrar progreso solo en el primer intento
-                        if attempt == 0:
-                            progress = int(status.progress() * 100)
-                            st.write(f"Descargando... {progress}%")
-                except Exception as chunk_error:
-                    st.warning(f"Error en chunk de descarga (intento {attempt + 1}): {chunk_error}")
-                    if attempt < max_retries - 1:
-                        time.sleep(2 ** attempt)  # Backoff exponencial
-                        break
-                    else:
-                        raise chunk_error
-            
-            fh.seek(0)
-            return fh
-            
-        except Exception as e:
-            error_msg = str(e)
-            st.warning(f"Error al descargar archivo (intento {attempt + 1}/{max_retries}): {error_msg}")
-            
-            # Si es el último intento, mostrar error detallado
-            if attempt == max_retries - 1:
-                if "EOF occurred in violation of protocol" in error_msg:
-                    st.error("❌ Error SSL: Problema de conexión con Google Drive")
-                    st.info("💡 Posibles soluciones:")
-                    st.info("1. Verifica tu conexión a internet")
-                    st.info("2. El archivo puede estar corrupto o muy grande")
-                    st.info("3. Google Drive puede estar temporalmente no disponible")
-                    st.info("4. Intenta recargar la página")
-                elif "timeout" in error_msg.lower():
-                    st.error("❌ Error de timeout: La descarga tardó demasiado")
-                elif "quota" in error_msg.lower():
-                    st.error("❌ Error de cuota: Se ha excedido el límite de Google Drive API")
-                else:
-                    st.error(f"❌ Error desconocido: {error_msg}")
-                return None
-            
-            # Esperar antes del siguiente intento
-            time.sleep(2 ** attempt)  # Backoff exponencial
-    
-    return None
+def download_file(service, file_id):
+    """Lee directamente el contenido del archivo desde Google Drive"""
+    try:
+        # Leer el archivo directamente desde Google Drive
+        request = service.files().get_media(fileId=file_id)
+        file_content = request.execute()
+        
+        # Convertir el contenido a StringIO para que pandas pueda leerlo
+        from io import StringIO
+        content_str = file_content.decode('utf-8')
+        return StringIO(content_str)
+        
+    except Exception as e:
+        st.error(f"Error leyendo archivo desde Google Drive: {e}")
+        return None
 
 def list_files_in_folder(service, folder_id):
     """Lista archivos en una carpeta de Google Drive"""
@@ -487,9 +433,17 @@ def mostrar_avance_semanal(use_local_files=False):
     lista_df = []
     for f, fecha in archivos_fechas:
         try:
-            fh = download_file(service, f['id'])
+            if use_local_files:
+                # Para archivos locales, f es el nombre del archivo
+                filepath = os.path.join("REPORTE SEMANAL", f)
+                fh = leer_archivo_local(filepath)
+            else:
+                # Para archivos de Google Drive, f es el objeto del archivo
+                fh = download_file(service, f['id'])
+            
             if not fh:
-                st.warning(f"No se pudo descargar el archivo: {f['name']}")
+                nombre_archivo = f if use_local_files else f['name']
+                st.warning(f"No se pudo leer el archivo: {nombre_archivo}")
                 continue
                 
             # Leer el archivo con el formato correcto
@@ -506,7 +460,8 @@ def mostrar_avance_semanal(use_local_files=False):
             
             # Verificar que exista la columna VolumenHA
             if "VolumenHA" not in dfw.columns:
-                st.warning(f"Archivo {f['name']} no tiene columna VolumenHA. Columnas disponibles: {list(dfw.columns)}")
+                nombre_archivo = f if use_local_files else f['name']
+                st.warning(f"Archivo {nombre_archivo} no tiene columna VolumenHA. Columnas disponibles: {list(dfw.columns)}")
                 continue
             
             # Convertir VolumenHA a numérico
@@ -519,7 +474,8 @@ def mostrar_avance_semanal(use_local_files=False):
             if "Hormigonado" in dfw.columns:
                 dfw = dfw[dfw["Hormigonado"] == "Sí"]
             else:
-                st.warning(f"Archivo {f['name']} no tiene columna Hormigonado")
+                nombre_archivo = f if use_local_files else f['name']
+                st.warning(f"Archivo {nombre_archivo} no tiene columna Hormigonado")
                 continue
             
             # Solo filas con Nivel y Elementos válidos
@@ -527,7 +483,8 @@ def mostrar_avance_semanal(use_local_files=False):
                 dfw = dfw[dfw["Nivel"].notna() & (dfw["Nivel"].astype(str).str.strip() != "")]
                 dfw = dfw[dfw["Elementos"].notna() & (dfw["Elementos"].astype(str).str.strip() != "")]
             else:
-                st.warning(f"Archivo {f['name']} no tiene columnas Nivel o Elementos")
+                nombre_archivo = f if use_local_files else f['name']
+                st.warning(f"Archivo {nombre_archivo} no tiene columnas Nivel o Elementos")
                 continue
             
             # Agrupar por Nivel y Elementos
@@ -536,7 +493,8 @@ def mostrar_avance_semanal(use_local_files=False):
             lista_df.append(resumen)
             
         except Exception as e:
-            st.error(f"Error procesando archivo {f['name']}: {e}")
+            nombre_archivo = f if use_local_files else f['name']
+            st.error(f"Error procesando archivo {nombre_archivo}: {e}")
             continue
     
     if not lista_df:
@@ -643,9 +601,17 @@ def mostrar_trisemanal(use_local_files=False):
     lista_df = []
     for f, fecha in archivos_fechas:
         try:
-            fh = download_file(service, f['id'])
+            if use_local_files:
+                # Para archivos locales, f es el nombre del archivo
+                filepath = os.path.join("REPORTE SEMANAL", f)
+                fh = leer_archivo_local(filepath)
+            else:
+                # Para archivos de Google Drive, f es el objeto del archivo
+                fh = download_file(service, f['id'])
+            
             if not fh:
-                st.warning(f"No se pudo descargar el archivo: {f['name']}")
+                nombre_archivo = f if use_local_files else f['name']
+                st.warning(f"No se pudo leer el archivo: {nombre_archivo}")
                 continue
                 
             # Leer el archivo con el formato correcto
@@ -662,7 +628,8 @@ def mostrar_trisemanal(use_local_files=False):
             
             # Verificar que exista la columna VolumenHA
             if "VolumenHA" not in dfw.columns:
-                st.warning(f"Archivo {f['name']} no tiene columna VolumenHA. Columnas disponibles: {list(dfw.columns)}")
+                nombre_archivo = f if use_local_files else f['name']
+                st.warning(f"Archivo {nombre_archivo} no tiene columna VolumenHA. Columnas disponibles: {list(dfw.columns)}")
                 continue
             
             # Convertir VolumenHA a numérico
@@ -675,7 +642,8 @@ def mostrar_trisemanal(use_local_files=False):
             if "Hormigonado" in dfw.columns:
                 dfw = dfw[dfw["Hormigonado"] == "Sí"]
             else:
-                st.warning(f"Archivo {f['name']} no tiene columna Hormigonado")
+                nombre_archivo = f if use_local_files else f['name']
+                st.warning(f"Archivo {nombre_archivo} no tiene columna Hormigonado")
                 continue
             
             # Solo filas con Nivel y Elementos válidos
@@ -683,7 +651,8 @@ def mostrar_trisemanal(use_local_files=False):
                 dfw = dfw[dfw["Nivel"].notna() & (dfw["Nivel"].astype(str).str.strip() != "")]
                 dfw = dfw[dfw["Elementos"].notna() & (dfw["Elementos"].astype(str).str.strip() != "")]
             else:
-                st.warning(f"Archivo {f['name']} no tiene columnas Nivel o Elementos")
+                nombre_archivo = f if use_local_files else f['name']
+                st.warning(f"Archivo {nombre_archivo} no tiene columnas Nivel o Elementos")
                 continue
             
             # Filtrar por FC_CON_TRISEMANAL = 'Semana 01' por defecto
@@ -696,7 +665,8 @@ def mostrar_trisemanal(use_local_files=False):
             lista_df.append(resumen)
             
         except Exception as e:
-            st.error(f"Error procesando archivo {f['name']}: {e}")
+            nombre_archivo = f if use_local_files else f['name']
+            st.error(f"Error procesando archivo {nombre_archivo}: {e}")
             continue
     
     if not lista_df:
@@ -823,64 +793,55 @@ def cargar_datos_local():
         st.error(f"❌ Error al cargar archivo local: {e}")
         return None
 
-@st.cache_data(ttl=3600)  # Cache por 1 hora
 def cargar_archivos_semanales_local():
-    """Carga archivos semanales desde carpeta local"""
+    """Carga archivos semanales desde la carpeta local"""
     try:
-        local_folder = "REPORTE SEMANAL"
-        if os.path.exists(local_folder):
-            archivos = []
-            for filename in os.listdir(local_folder):
-                if filename.endswith('_AO_GENERAL.txt'):
-                    file_path = os.path.join(local_folder, filename)
-                    # Crear un objeto similar al de Google Drive
-                    file_obj = {
-                        'id': file_path,  # Usar path como ID
-                        'name': filename,
-                        'local_path': file_path
-                    }
-                    archivos.append(file_obj)
-            
-            def extraer_fecha(nombre):
-                # Intentar diferentes formatos de fecha
-                patterns = [
-                    r"(\d{2}-\d{2}-\d{4})_AO_GENERAL\.txt",  # DD-MM-YYYY
-                    r"(\d{2}-\d{2}-\d{2})_AO_GENERAL\.txt",  # DD-MM-YY
-                    r"(\d{4}-\d{2}-\d{2})_AO_GENERAL\.txt",  # YYYY-MM-DD
-                ]
+        carpeta = "REPORTE SEMANAL"
+        if not os.path.exists(carpeta):
+            st.error(f"❌ Carpeta '{carpeta}' no encontrada")
+            return [], None
+        
+        archivos = []
+        for filename in os.listdir(carpeta):
+            if filename.endswith('.txt') and 'AO_GENERAL' in filename:
+                # Extraer fecha del nombre del archivo
+                fecha_str = filename.split('_')[0]  # Tomar la primera parte antes del primer _
                 
-                for pattern in patterns:
-                    m = re.match(pattern, nombre)
-                    if m:
-                        fecha_str = m.group(1)
-                        try:
-                            # Intentar diferentes formatos de fecha
-                            if len(fecha_str.split('-')[2]) == 4:  # YYYY
-                                if len(fecha_str.split('-')[0]) == 2:  # DD-MM-YYYY
-                                    return pd.to_datetime(fecha_str, format='%d-%m-%Y', dayfirst=True)
-                                else:  # YYYY-MM-DD
-                                    return pd.to_datetime(fecha_str, format='%Y-%m-%d')
-                            else:  # DD-MM-YY
-                                return pd.to_datetime(fecha_str, format='%d-%m-%y', dayfirst=True)
-                        except:
-                            continue
-                return None
-            
-            archivos_fechas = [(f, extraer_fecha(f['name'])) for f in archivos]
-            archivos_fechas = sorted(
-                [x for x in archivos_fechas if x[1] is not None], 
-                key=lambda x: x[1]
-            )
-            
-            if archivos_fechas:
-                st.success("✅ Archivos semanales cargados desde carpeta local")
-                return archivos_fechas, None  # None indica que es local
-        else:
-            st.warning("⚠️ No se encontró la carpeta local REPORTE SEMANAL")
+                # Intentar diferentes formatos de fecha
+                fecha = None
+                for formato in ['%d-%m-%Y', '%d-%m-%y', '%Y-%m-%d']:
+                    try:
+                        fecha = datetime.strptime(fecha_str, formato)
+                        break
+                    except ValueError:
+                        continue
+                
+                if fecha:
+                    archivos.append((filename, fecha))
+        
+        # Ordenar por fecha
+        archivos.sort(key=lambda x: x[1])
+        
+        if not archivos:
+            st.warning("❌ No se encontraron archivos semanales en la carpeta local")
+            return [], None
+        
+        return archivos, None  # None indica que es local
+        
     except Exception as e:
         st.error(f"❌ Error al cargar archivos locales: {e}")
-    
-    return [], None
+        return [], None
+
+def leer_archivo_local(filepath):
+    """Lee directamente un archivo local"""
+    try:
+        with open(filepath, 'r', encoding='utf-8') as f:
+            content = f.read()
+        from io import StringIO
+        return StringIO(content)
+    except Exception as e:
+        st.error(f"Error leyendo archivo local {filepath}: {e}")
+        return None
 
 # Función principal
 def main():
